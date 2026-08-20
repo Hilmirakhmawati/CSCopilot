@@ -1,0 +1,429 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CSCoPilot Dashboard Wireframe</title>
+<style>
+:root{--bg:#f7faf8;--panel:#fff;--ink:#142016;--muted:#647568;--line:#dfe8e0;--accent:#10AF13;--accent-soft:#effaf0;--accent-hover:#0c8c10;--accent-line:#c6e8c9;--warn:#fffbeb;--warn-line:#fde68a;--radius:14px}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+button,input,textarea{font:inherit}button{cursor:pointer}
+.app{display:flex;height:100vh;overflow:hidden}
+.side{width:270px;background:#fff;border-right:1px solid var(--line);display:flex;flex-direction:column}
+.brand{height:80px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:12px;padding:0 26px;flex:none}
+.logo{width:40px;height:40px;border-radius:12px;background:var(--accent);color:#fff;display:grid;place-items:center;font-size:19px;flex:none}
+.brand b{font-size:16px}.brand small{display:block;color:var(--muted);font-size:11px}
+.nav{padding:16px 14px 4px;display:flex;flex-direction:column;gap:2px;flex:none}
+.nav button{display:flex;align-items:center;gap:10px;width:100%;border:0;background:transparent;border-radius:9px;padding:11px 12px;color:var(--muted);font-weight:600;text-align:left}
+.nav button:hover{background:#f1f5f2;color:var(--ink)}
+.nav button.active{background:var(--accent-soft);color:var(--accent-hover)}
+.new-chat{margin:8px 14px 6px;display:flex;align-items:center;justify-content:center;gap:8px;border:1px solid var(--accent-line);background:var(--accent-soft);color:var(--accent-hover);border-radius:10px;padding:11px;font-weight:650}
+.new-chat:hover{background:#dff5e0}
+.history{flex:1;overflow-y:auto;padding:6px 14px 14px}
+.history-label{padding:14px 6px 8px;color:#94a3b8;font-size:10px;font-weight:700;letter-spacing:.16em;text-transform:uppercase}
+.thread{display:block;width:100%;text-align:left;border:0;background:transparent;border-radius:9px;padding:10px 12px;margin:2px 0;color:var(--ink)}
+.thread:hover{background:#f1f5f2}
+.thread.active{background:var(--accent-soft);color:var(--accent-hover);font-weight:600}
+.thread small{display:block;color:var(--muted);font-weight:400;margin-top:2px;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.profile{border-top:1px solid var(--line);padding:15px;flex:none}
+.profile-row{display:flex;align-items:center;gap:10px;background:#fff;padding:12px;border:1px solid var(--accent-line);border-radius:12px;box-shadow:0 4px 14px #10af1310}
+.avatar{width:34px;height:34px;flex:0 0 34px;border-radius:50%;background:var(--accent);color:#fff;display:grid;place-items:center;font-size:11px;font-weight:700}
+.profile p{margin:0;font-weight:700;font-size:13px;line-height:1.2}
+.profile small{display:block;margin-top:3px;color:var(--muted);font-size:11px}
+.logout{margin-left:auto;border:0;background:transparent;color:var(--muted)}
+.main{flex:1;min-width:0;display:flex;flex-direction:column;height:100vh}
+.top{height:80px;background:#fff;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;gap:20px;padding:0 32px;flex:none}
+.top .eyebrow{color:var(--accent);font-weight:700;font-size:12px;margin:0}
+.top .title{font-size:19px;font-weight:750;margin:2px 0 0}
+.topuser{display:flex;align-items:center;gap:10px;border:1px solid var(--line);background:#fff;border-radius:99px;padding:6px 14px 6px 6px;white-space:nowrap}
+.topuser .avatar{width:32px;height:32px;flex:0 0 32px;font-size:11px}
+.topuser p{margin:0;font-weight:700;font-size:12.5px;line-height:1.2}
+.topuser small{display:block;color:var(--muted);font-size:11px;margin-top:1px}
+.view{display:none;flex:1;min-height:0;flex-direction:column}
+.view.active{display:flex}
+
+/* ---------- dashboard ---------- */
+.dash-scroll{flex:1;overflow-y:auto;padding:32px 32px 44px}
+.dash-inner{max-width:1080px;margin:0 auto;display:flex;flex-direction:column;gap:26px}
+.section-head{display:flex;align-items:baseline;justify-content:space-between;gap:16px;margin-bottom:14px}
+.section-head h2{font-size:15px;font-weight:700;margin:0}
+.section-head span{color:var(--muted);font-size:12px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:16px}
+.stat{background:#fff;border:1px solid var(--line);border-radius:var(--radius);padding:18px 20px}
+.stat .label{color:var(--muted);font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase}
+.stat .value{font-size:30px;font-weight:750;letter-spacing:-.02em;margin-top:8px;line-height:1.1}
+.stat .hint{color:var(--muted);font-size:12px;margin-top:6px}
+.panel{background:#fff;border:1px solid var(--line);border-radius:var(--radius);padding:22px 24px}
+.cols{display:grid;grid-template-columns:1.35fr 1fr;gap:20px;align-items:start}
+.topic{display:flex;align-items:center;gap:14px;padding:11px 0;border-bottom:1px solid var(--line)}
+.topic:last-child{border-bottom:0}
+.topic .name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bar{width:150px;height:7px;border-radius:99px;background:#eef3ef;overflow:hidden;flex:none}
+.bar i{display:block;height:100%;background:var(--accent);border-radius:99px}
+.topic .num{width:32px;text-align:right;color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums;flex:none}
+.rows{display:flex;flex-direction:column;gap:12px}
+.row{display:flex;align-items:center;gap:12px;font-size:13px}
+.row .k{flex:1;color:var(--muted)}
+.row .v{font-weight:700;font-variant-numeric:tabular-nums}
+.badge{display:inline-flex;border-radius:99px;padding:3px 9px;background:#e2e8f0;color:#334155;font-size:11px;font-weight:700}
+.badge.blue{background:#cdeecf;color:#0c8c10}
+.badge.amber{background:#fef3c7;color:#92400e}
+.alert{border:1px solid var(--warn-line);background:var(--warn);border-radius:10px;padding:15px;color:#92400e;font-size:13px}
+.alert b{display:block;color:#78350f;margin-bottom:3px}
+.note{color:var(--muted);font-size:12px;line-height:1.7;border:1px dashed var(--line);border-radius:10px;padding:14px 16px;background:#fff}
+
+/* ---------- chat ---------- */
+.chat-scroll{flex:1;overflow-y:auto;padding:32px 0}
+.chat-inner{max-width:760px;margin:0 auto;padding:0 24px;display:flex;flex-direction:column;gap:22px}
+.msg{display:flex;gap:12px;max-width:88%}
+.msg.bot{align-self:flex-start}
+.msg.user{align-self:flex-end;flex-direction:row-reverse}
+.bubble-avatar{width:30px;height:30px;flex:0 0 30px;border-radius:9px;display:grid;place-items:center;font-size:14px;font-weight:700}
+.msg.bot .bubble-avatar{background:var(--accent);color:#fff}
+.msg.user .bubble-avatar{background:#e2e8f0;color:#334155}
+.bubble{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px 16px;line-height:1.75}
+.msg.bot .bubble{border-top-left-radius:4px}
+.msg.user .bubble{background:var(--accent);color:#fff;border-color:var(--accent);border-top-right-radius:4px}
+.bubble p{margin:0}
+.bubble ol,.bubble ul{margin:8px 0 0;padding-left:18px}
+.sources{margin-top:12px;display:flex;flex-direction:column;gap:6px}
+.source-chip{display:flex;align-items:center;gap:8px;border:1px solid var(--line);background:#f8fafc;border-radius:9px;padding:8px 11px;font-size:12px;color:var(--muted)}
+.source-chip b{color:var(--ink);font-weight:600}
+.source-chip .badge{margin-left:auto}
+.clarify{border:1px solid var(--warn-line);background:var(--warn);border-radius:10px;padding:12px 14px;color:#92400e;font-size:13px}
+.clarify b{display:block;color:#78350f;margin-bottom:2px}
+.typing{display:flex;gap:4px;align-items:center;padding:4px 0}
+.typing span{width:6px;height:6px;border-radius:50%;background:var(--muted);opacity:.5;animation:blink 1.2s infinite}
+.typing span:nth-child(2){animation-delay:.2s}.typing span:nth-child(3){animation-delay:.4s}
+@keyframes blink{0%,80%,100%{opacity:.25}40%{opacity:.8}}
+.composer{flex:none;border-top:1px solid var(--line);background:#fff;padding:22px 32px 26px}
+.composer-inner{max-width:760px;margin:0 auto;display:flex;flex-direction:column;gap:16px}
+.suggestions-label{color:#94a3b8;font-size:10px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;margin-bottom:10px}
+.suggestions{display:flex;flex-wrap:wrap;gap:10px}
+.suggestion{border:1px solid var(--line);background:#fff;border-radius:99px;padding:9px 16px;color:var(--muted);font-size:12.5px;line-height:1.3;white-space:nowrap}
+.suggestion:hover{border-color:var(--accent-line);color:var(--accent-hover);background:var(--accent-soft)}
+.composer-box{display:flex;align-items:flex-end;gap:14px;border:1px solid var(--line);border-radius:16px;padding:14px 14px 14px 20px;background:#fff}
+.composer-box:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px #d9f3db}
+.composer-box textarea{flex:1;border:0;outline:0;resize:none;min-height:26px;max-height:140px;padding:8px 0;background:transparent;line-height:1.6}
+.send-btn{width:40px;height:40px;flex:0 0 40px;border-radius:12px;border:0;background:var(--accent);color:#fff;display:grid;place-items:center;font-size:16px}
+.send-btn:hover{background:var(--accent-hover)}
+.composer-note{text-align:center;color:var(--muted);font-size:11px;line-height:1.6;margin:0}
+.empty{text-align:center;padding:60px 24px 10px}
+.empty .icon-box{width:52px;height:52px;border-radius:14px;background:var(--accent-soft);color:var(--accent);display:grid;place-items:center;margin:0 auto 18px;font-size:24px}
+.empty h1{font-size:24px;margin:0 0 8px;letter-spacing:-.02em}
+.empty p{color:var(--muted);max-width:420px;margin:0 auto;line-height:1.7}
+
+/* ---------- login ---------- */
+.login{position:fixed;inset:0;z-index:50;background:#0f172a;display:grid;place-items:center;padding:20px;overflow-y:auto}
+.login-box{max-width:940px;width:100%;background:#fff;border-radius:18px;overflow:hidden;display:grid;grid-template-columns:1.05fr .95fr;box-shadow:0 25px 70px #0005}
+.login-brand{padding:58px;background:linear-gradient(135deg,#10AF13,#0c4a0e);color:#fff;display:flex;flex-direction:column}
+.login-brand h1{font-size:38px;line-height:1.15;margin:auto 0 0}
+.login-brand p{color:#d9f3db;line-height:1.8;margin:14px 0 0}
+.login-form{padding:58px}
+.login-form h1{font-size:30px;margin:0 0 8px}
+.login-form p{color:var(--muted);margin:0}
+.field{margin-top:18px}
+.field label{display:block;font-size:12px;font-weight:700;color:var(--muted);margin-bottom:6px}
+.field input,.field select{width:100%;border:1px solid var(--line);border-radius:10px;padding:12px 14px;outline:0;background:#fff;color:var(--ink)}
+.field input:focus,.field select:focus{border-color:var(--accent);box-shadow:0 0 0 3px #d9f3db}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;border:1px solid transparent;border-radius:10px;padding:12px 15px;font-weight:650;background:var(--accent);color:#fff}
+.btn:hover{background:var(--accent-hover)}
+.login-form .btn{width:100%;margin-top:22px}
+.eyebrow{color:var(--accent);font-weight:700;font-size:13px;margin-bottom:8px}
+.form-alert{display:none;align-items:flex-start;gap:10px;border:1px solid #fecaca;background:#fef2f2;border-radius:10px;padding:13px 15px;color:#991b1b;font-size:12.5px;line-height:1.6;margin-top:18px}
+.form-alert.show{display:flex}
+.form-alert b{display:block;color:#7f1d1d;margin-bottom:2px}
+.field.field-error input,.field.field-error select{border-color:#fca5a5;background:#fff}
+.field.field-error input:focus,.field.field-error select:focus{box-shadow:0 0 0 3px #fee2e2}
+.field-error-msg{display:none;color:#b91c1c;font-size:11.5px;margin-top:5px}
+.field.field-error .field-error-msg{display:block}
+.role-pick{display:flex;gap:8px;margin-top:8px}
+.role-pick button{flex:1;border:1px solid var(--line);background:#fff;border-radius:10px;padding:10px;color:var(--muted);font-size:12.5px;font-weight:600}
+.role-pick button.active{border-color:var(--accent);background:var(--accent-soft);color:var(--accent-hover)}
+.mobile-top{display:none}
+@media(max-width:980px){.cols{grid-template-columns:1fr}}
+@media(max-width:850px){
+.side{position:fixed;inset:0 20% 0 0;z-index:20;transform:translateX(-100%);transition:.25s;box-shadow:0 0 40px #0006}
+.side.open{transform:translateX(0)}
+.mobile-top{display:flex;align-items:center;gap:12px;height:64px;padding:0 18px;border-bottom:1px solid var(--line);background:#fff;flex:none}
+.menu-btn{border:1px solid var(--line);background:#fff;border-radius:8px;width:36px;height:36px;display:grid;place-items:center}
+.top{display:none}
+.login-box{grid-template-columns:1fr}.login-brand{display:none}.login-form{padding:38px 25px}
+.msg{max-width:96%}
+.dash-scroll{padding:22px 18px 34px}
+.composer{padding:16px 18px 20px}
+.suggestions{flex-wrap:nowrap;overflow-x:auto;padding-bottom:4px;-webkit-overflow-scrolling:touch}
+}
+</style>
+</head>
+<body>
+
+<!-- ============ LOGIN ============ -->
+<div id="login" class="login">
+  <div class="login-box">
+    <section class="login-brand">
+      <div style="display:flex;align-items:center;gap:12px"><div class="logo" style="background:#ffffff22">✦</div><b style="font-size:16px">CSCoPilot</b></div>
+      <h1>Tanya issue-nya.<br>Langsung dapat jawaban.</h1>
+      <p>Chatbot internal untuk Customer Support. Jelaskan issue, CSCoPilot mencari knowledge yang relevan dan menjawab lengkap dengan source reference.</p>
+    </section>
+    <section class="login-form">
+      <div class="eyebrow">Internal System</div>
+      <h1>Welcome back</h1>
+      <p>Akses dibatasi untuk akun internal yang telah diotorisasi.</p>
+      <div class="form-alert" id="loginAlert"><span>⚠</span><div><b id="alertTitle">Email atau password salah</b><span id="alertText">Periksa kembali email dan password Anda, lalu coba lagi.</span></div></div>
+      <div class="field" id="fieldEmail"><label>Email perusahaan</label><input type="email" id="inputEmail" placeholder="nama@timedoor.co.id"><div class="field-error-msg" id="errEmail">Masukkan email perusahaan Anda.</div></div>
+      <div class="field" id="fieldPass"><label>Password</label><input type="password" id="inputPass" placeholder="••••••••"><div class="field-error-msg" id="errPass">Masukkan password Anda.</div></div>
+      <div class="field"><label>Masuk sebagai (wireframe only)</label>
+        <select id="roleSelect">
+          <option value="cs">Customer Support</option>
+          <option value="mgmt">Management</option>
+          <option value="pm">Project Manager</option>
+          <option value="po">Product Owner / Internal System Team</option>
+          <option value="dev">Developer</option>
+        </select>
+      </div>
+      <button class="btn" onclick="attemptLogin()">Masuk →</button>
+      <small style="display:block;text-align:center;color:#94a3b8;margin-top:16px">Authentication provider dihubungkan pada tahap implementation. Tanpa login, chatbot dan histori tidak dapat diakses.</small>
+      <small style="display:block;text-align:center;color:#cbd5e1;margin-top:8px">Wireframe demo: kosongkan salah satu field, atau isi password apa saja untuk lihat error.</small>
+    </section>
+  </div>
+</div>
+
+<!-- ============ APP ============ -->
+<div class="app">
+  <aside class="side" id="side">
+    <div class="brand"><div class="logo">✦</div><div><b>CSCoPilot</b><small>Support chatbot</small></div></div>
+
+    <div class="nav">
+      <button id="navDash" onclick="show('dashboard')">▤ Dashboard</button>
+      <button id="navChat" class="active" onclick="show('chat')">✦ Chatbot</button>
+    </div>
+
+    <button class="new-chat" onclick="newChat()">＋ New chat</button>
+    <div class="history">
+      <div class="history-label">Recent</div>
+      <button class="thread active" onclick="selectThread(this)">Login gagal setelah reset password<small>Hari ini · 10:24</small></button>
+      <button class="thread" onclick="selectThread(this)">Pembayaran client gagal diproses<small>Hari ini · 09:10</small></button>
+      <button class="thread" onclick="selectThread(this)">SOP keterlambatan respons<small>Kemarin · 16:40</small></button>
+      <button class="thread" onclick="selectThread(this)">Template balasan pembuka<small>Kemarin · 11:02</small></button>
+    </div>
+
+    <div class="profile"><div class="profile-row"><div class="avatar" id="roleAvatar">CS</div><div><p id="roleName">Customer Support</p><small id="roleOrg">Agent · Timedoor Indonesia</small></div><button class="logout" onclick="doLogout()">↪</button></div></div>
+  </aside>
+
+  <div class="main">
+    <div class="mobile-top"><button class="menu-btn" onclick="document.getElementById('side').classList.toggle('open')">☰</button><b>CSCoPilot</b></div>
+    <header class="top">
+      <div><p class="eyebrow">Customer Support Timedoor Indonesia</p><h1 class="title" id="pageTitle">Login gagal setelah reset password</h1></div>
+      <div class="topuser"><div class="avatar" id="topAvatar">CS</div><div><p id="topName">Customer Support</p><small id="topRole">Agent</small></div></div>
+    </header>
+
+    <!-- ---------- DASHBOARD ---------- -->
+    <div class="view" id="view-dashboard">
+      <div class="dash-scroll">
+        <div class="dash-inner">
+
+          <div>
+            <div class="section-head"><h2>Ringkasan minggu ini</h2><span>1–7 Agustus 2026</span></div>
+            <div class="stats">
+              <div class="stat"><div class="label">Percakapan</div><div class="value">128</div><div class="hint">Total sesi chatbot</div></div>
+              <div class="stat"><div class="label">Agent aktif</div><div class="value">7</div><div class="hint">Dari 9 agent pilot</div></div>
+              <div class="stat"><div class="label">Jawaban dengan source</div><div class="value">86%</div><div class="hint">Sisanya fallback / klarifikasi</div></div>
+              <div class="stat"><div class="label">Butuh klarifikasi</div><div class="value">19%</div><div class="hint">Chatbot minta info tambahan</div></div>
+            </div>
+          </div>
+
+          <div class="cols">
+            <div class="panel">
+              <div class="section-head"><h2>Issue paling sering ditanyakan</h2><span>7 hari terakhir</span></div>
+              <div class="topic"><span class="name">Login &amp; reset password</span><span class="bar"><i style="width:100%"></i></span><span class="num">42</span></div>
+              <div class="topic"><span class="name">Pembayaran gagal diproses</span><span class="bar"><i style="width:64%"></i></span><span class="num">27</span></div>
+              <div class="topic"><span class="name">Keterlambatan respons</span><span class="bar"><i style="width:45%"></i></span><span class="num">19</span></div>
+              <div class="topic"><span class="name">Permintaan template balasan</span><span class="bar"><i style="width:33%"></i></span><span class="num">14</span></div>
+              <div class="topic"><span class="name">Akses akun terkunci</span><span class="bar"><i style="width:21%"></i></span><span class="num">9</span></div>
+            </div>
+
+            <div style="display:flex;flex-direction:column;gap:20px">
+              <div class="panel">
+                <div class="section-head"><h2>Status sinkronisasi Notion</h2></div>
+                <div class="rows">
+                  <div class="row"><span class="k">Sinkronisasi terakhir</span><span class="v">Hari ini · 08:00</span></div>
+                  <div class="row"><span class="k">Dokumen terindeks</span><span class="v">24</span></div>
+                  <div class="row"><span class="k">Interval sync</span><span class="v">Setiap 6 jam</span></div>
+                  <div class="row"><span class="k">Status</span><span class="badge blue">Berhasil</span></div>
+                </div>
+              </div>
+              <div class="panel">
+                <div class="section-head"><h2>Perlu perhatian</h2></div>
+                <div class="alert"><b>3 pertanyaan tanpa source</b>Chatbot tidak menemukan knowledge yang cocok. Knowledge Owner perlu melengkapi dokumentasi terkait topik ini di Notion.</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="note"><b>Catatan scope MVP.</b> Dashboard ini hanya menampilkan ringkasan operasional untuk Support Lead: volume percakapan, topik yang sering muncul, kualitas source, dan status sync. Analytics lanjutan (grafik tren, export, filter kompleks) berada di luar scope MVP.</div>
+
+        </div>
+      </div>
+    </div>
+
+    <!-- ---------- CHAT ---------- -->
+    <div class="view active" id="view-chat">
+      <div class="chat-scroll" id="chatScroll">
+        <div class="chat-inner" id="chatInner">
+
+          <div class="msg bot"><div class="bubble-avatar">✦</div><div class="bubble">
+            <p>Halo, ceritakan issue yang sedang ditangani. Saya akan mencari solusi dari knowledge perusahaan.</p>
+          </div></div>
+
+          <div class="msg user"><div class="bubble-avatar">CS</div><div class="bubble">
+            <p>Customer tidak bisa login setelah mengganti password.</p>
+          </div></div>
+
+          <div class="msg bot"><div class="bubble-avatar">✦</div><div class="bubble">
+            <p>Kemungkinan penyebabnya:</p>
+            <ol>
+              <li>Session lama masih aktif di perangkat customer.</li>
+              <li>Password baru belum sepenuhnya tersinkronisasi.</li>
+            </ol>
+            <p style="margin-top:10px">Langkah yang disarankan: minta customer logout dari seluruh perangkat, lalu coba login kembali melalui browser incognito. Jika masih gagal, lakukan reset password ulang.</p>
+            <div class="sources">
+              <div class="source-chip">▤ <b>Panduan Reset Password</b><span class="badge blue">FAQ</span></div>
+              <div class="source-chip">▤ <b>Authentication Troubleshooting v2</b><span class="badge blue">Troubleshooting</span></div>
+            </div>
+          </div></div>
+
+          <div class="msg user"><div class="bubble-avatar">CS</div><div class="bubble">
+            <p>Customer bilang sudah coba incognito, masih gagal juga.</p>
+          </div></div>
+
+          <div class="msg bot"><div class="bubble-avatar">✦</div><div class="bubble">
+            <div class="clarify"><b>Butuh informasi tambahan</b>Apakah customer menerima pesan error tertentu, atau halaman login hanya diam/loading terus?</div>
+          </div></div>
+
+          <div class="msg bot"><div class="bubble-avatar">✦</div><div class="bubble">
+            <div class="typing"><span></span><span></span><span></span></div>
+          </div></div>
+
+        </div>
+      </div>
+
+      <div class="composer">
+        <div class="composer-inner">
+          <div>
+            <div class="suggestions-label">Coba tanyakan</div>
+            <div class="suggestions">
+              <button class="suggestion" onclick="fill(this)">Cari SOP keterlambatan respons</button>
+              <button class="suggestion" onclick="fill(this)">Bagaimana menangani pembayaran gagal?</button>
+              <button class="suggestion" onclick="fill(this)">Template balasan pembuka</button>
+            </div>
+          </div>
+          <div class="composer-box">
+            <textarea id="composerInput" rows="1" placeholder="Jelaskan issue customer..."></textarea>
+            <button class="send-btn" onclick="sendMessage()">➤</button>
+          </div>
+          <p class="composer-note">CSCoPilot menjawab berdasarkan knowledge yang tersedia. Selalu periksa source sebelum digunakan kepada client.</p>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+// Hanya Customer Support yang memakai chatbot; role lain adalah stakeholder
+// yang cukup melihat dashboard ringkasan.
+const USERS={
+  cs  :{name:'Customer Support', role:'User',        initials:'CS', chat:true },
+  mgmt:{name:'Management',       role:'Stakeholder', initials:'MG', chat:false},
+  pm  :{name:'Project Manager',  role:'Stakeholder', initials:'PM', chat:false},
+  po  :{name:'Product Owner',    role:'Internal System Team', initials:'PO', chat:false},
+  dev :{name:'Developer',        role:'Stakeholder', initials:'DV', chat:false}
+};
+
+function clearLoginError(){
+  document.getElementById('loginAlert').classList.remove('show');
+  document.getElementById('fieldEmail').classList.remove('field-error');
+  document.getElementById('fieldPass').classList.remove('field-error');
+}
+function attemptLogin(){
+  clearLoginError();
+  const email=document.getElementById('inputEmail').value.trim();
+  const pass=document.getElementById('inputPass').value.trim();
+  let hasFieldError=false;
+  if(!email){document.getElementById('fieldEmail').classList.add('field-error');hasFieldError=true;}
+  if(!pass){document.getElementById('fieldPass').classList.add('field-error');hasFieldError=true;}
+  if(hasFieldError)return;
+  // Wireframe demo: password "demo123" dianggap benar, selain itu tampilkan error kredensial.
+  if(pass!=='demo123'){
+    document.getElementById('alertTitle').textContent='Email atau password salah';
+    document.getElementById('alertText').textContent='Periksa kembali email dan password Anda, lalu coba lagi.';
+    document.getElementById('loginAlert').classList.add('show');
+    document.getElementById('fieldEmail').classList.add('field-error');
+    document.getElementById('fieldPass').classList.add('field-error');
+    return;
+  }
+  doLogin();
+}
+document.getElementById('inputEmail').addEventListener('input',clearLoginError);
+document.getElementById('inputPass').addEventListener('input',clearLoginError);
+function doLogin(){
+  const u=USERS[document.getElementById('roleSelect').value];
+  document.getElementById('login').style.display='none';
+  ['topAvatar','roleAvatar'].forEach(id=>document.getElementById(id).textContent=u.initials);
+  ['topName','roleName'].forEach(id=>document.getElementById(id).textContent=u.name);
+  document.getElementById('topRole').textContent=u.role;
+  document.getElementById('roleOrg').textContent=u.role+' · Timedoor Indonesia';
+  document.getElementById('navChat').style.display=u.chat?'flex':'none';
+  document.querySelector('.new-chat').style.display=u.chat?'flex':'none';
+  document.querySelector('.history').style.display=u.chat?'block':'none';
+  show(u.chat?'chat':'dashboard');
+}
+function doLogout(){
+  document.getElementById('login').style.display='grid';
+  document.getElementById('side').classList.remove('open');
+}
+function show(id){
+  document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
+  document.getElementById('view-'+id).classList.add('active');
+  document.getElementById('navDash').classList.toggle('active',id==='dashboard');
+  document.getElementById('navChat').classList.toggle('active',id==='chat');
+  if(id==='dashboard'){
+    document.getElementById('pageTitle').textContent='Dashboard';
+  }else{
+    const active=document.querySelector('.thread.active');
+    document.getElementById('pageTitle').textContent=active?active.firstChild.textContent.trim():'New conversation';
+  }
+  document.getElementById('side').classList.remove('open');
+}
+function newChat(){
+  document.querySelectorAll('.thread').forEach(t=>t.classList.remove('active'));
+  document.getElementById('chatInner').innerHTML='<div class="empty"><div class="icon-box">✦</div><h1>Mulai percakapan baru</h1><p>Jelaskan issue customer dengan bahasa natural. CSCoPilot akan mencari knowledge yang relevan dan memberikan jawaban beserta source reference.</p></div>';
+  show('chat');
+  document.getElementById('pageTitle').textContent='New conversation';
+}
+function selectThread(btn){
+  document.querySelectorAll('.thread').forEach(t=>t.classList.remove('active'));
+  btn.classList.add('active');
+  show('chat');
+  document.getElementById('pageTitle').textContent=btn.firstChild.textContent.trim();
+}
+function fill(btn){
+  const i=document.getElementById('composerInput');
+  i.value=btn.textContent;i.focus();
+}
+function sendMessage(){
+  const input=document.getElementById('composerInput');
+  const text=input.value.trim();
+  if(!text)return;
+  const esc=text.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+  document.getElementById('chatInner').insertAdjacentHTML('beforeend',
+    `<div class="msg user"><div class="bubble-avatar">CS</div><div class="bubble"><p>${esc}</p></div></div>`+
+    `<div class="msg bot"><div class="bubble-avatar">✦</div><div class="bubble"><div class="typing"><span></span><span></span><span></span></div></div></div>`);
+  input.value='';
+  const s=document.getElementById('chatScroll');s.scrollTop=s.scrollHeight;
+}
+document.getElementById('composerInput').addEventListener('keydown',e=>{
+  if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMessage();}
+});
+</script>
+</body></html>

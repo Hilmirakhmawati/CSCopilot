@@ -1,0 +1,514 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<title>CSCoPilot Figma Import</title>
+<style>
+:root{
+--bg:#f7faf8;--surface:#fff;--ink:#142016;--muted:#647568;--line:#dfe8e0;
+--accent:#10AF13;--accent-hover:#0c8c10;--accent-soft:#effaf0;--accent-line:#c6e8c9;--accent-deep:#0c4a0e;
+--track:#eef3ef;--label:#94a3b8;--hover:#f1f5f2;--login-bg:#0f172a;
+--warn:#fffbeb;--warn-line:#fde68a;--warn-ink:#92400e;--warn-ink-strong:#78350f;
+--badge-bg:#e2e8f0;--badge-ink:#334155;--green-bg:#cdeecf;--green-ink:#0c8c10
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#e8ecea;font-family:Inter,"Segoe UI",sans-serif;color:var(--ink);font-size:14px;line-height:1.5;padding:60px 40px}
+.stage{display:flex;flex-direction:column;gap:80px;align-items:flex-start}
+.frame-label{font-size:13px;font-weight:700;color:#5b6b5f;letter-spacing:.06em;text-transform:uppercase;margin-bottom:14px}
+
+/* ---------- frames ---------- */
+.frame{width:1440px;background:var(--bg);overflow:hidden;box-shadow:0 10px 40px rgba(0,0,0,.08)}
+.frame-desktop{height:900px;display:flex}
+.frame-mobile{width:390px;height:844px;background:var(--bg);display:flex;flex-direction:column;overflow:hidden;box-shadow:0 10px 40px rgba(0,0,0,.08)}
+
+/* ---------- sidebar ---------- */
+.sidebar{width:270px;flex:0 0 270px;background:var(--surface);border-right:1px solid var(--line);display:flex;flex-direction:column}
+.brand{height:80px;flex:none;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:12px;padding:0 26px}
+.logo{width:40px;height:40px;flex:none;border-radius:12px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:19px}
+.brand-name{font-size:16px;font-weight:700;line-height:1.3}
+.brand-sub{font-size:11px;color:var(--muted);line-height:1.5}
+.nav{padding:16px 14px 0;display:flex;flex-direction:column;gap:2px}
+.nav-item{display:flex;align-items:center;gap:10px;padding:11px 12px;border-radius:9px;color:var(--muted);font-weight:600}
+.nav-item.active{background:var(--accent-soft);color:var(--accent-hover)}
+.new-chat{margin:8px 14px 6px;display:flex;align-items:center;justify-content:center;gap:8px;border:1px solid var(--accent-line);background:var(--accent-soft);color:var(--accent-hover);border-radius:10px;padding:11px;font-weight:650}
+.history{flex:1;padding:6px 14px 14px;overflow:hidden}
+.label-caps{font-size:10px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--label)}
+.history .label-caps{padding:14px 6px 8px}
+.thread{padding:10px 12px;border-radius:9px;margin-bottom:2px}
+.thread.active{background:var(--accent-soft)}
+.thread-title{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.thread.active .thread-title{color:var(--accent-hover);font-weight:600}
+.thread-time{font-size:11px;color:var(--muted);margin-top:2px}
+.profile{flex:none;border-top:1px solid var(--line);padding:15px}
+.profile-card{display:flex;align-items:center;gap:10px;padding:12px;border:1px solid var(--accent-line);border-radius:12px;background:var(--surface);box-shadow:0 4px 14px rgba(16,175,19,.06)}
+.avatar-circle{width:34px;height:34px;flex:none;border-radius:999px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700}
+.profile-name{font-size:13px;font-weight:700;line-height:1.2}
+.profile-role{font-size:11px;color:var(--muted);margin-top:3px}
+.logout{margin-left:auto;color:var(--muted)}
+
+/* ---------- main + topbar ---------- */
+.main{flex:1;min-width:0;display:flex;flex-direction:column}
+.topbar{height:80px;flex:none;background:var(--surface);border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;padding:0 32px}
+.eyebrow{font-size:12px;font-weight:700;color:var(--accent)}
+.page-title{font-size:19px;font-weight:750;margin-top:2px}
+.topuser{display:flex;align-items:center;gap:10px;border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:6px 14px 6px 6px}
+.avatar-top{width:32px;height:32px;flex:none;border-radius:999px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700}
+.topuser-name{font-size:12.5px;font-weight:700;line-height:1.2}
+.topuser-role{font-size:11px;color:var(--muted);margin-top:1px}
+
+/* ---------- chat ---------- */
+.chat-area{flex:1;padding:32px 0;overflow:hidden}
+.chat-col{width:760px;margin:0 auto;padding:0 24px;display:flex;flex-direction:column;gap:22px}
+.msg{display:flex;gap:12px;max-width:88%}
+.msg-bot{align-self:flex-start}
+.msg-user{align-self:flex-end;flex-direction:row-reverse}
+.avatar-sq{width:30px;height:30px;flex:none;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700}
+.avatar-bot{background:var(--accent);color:#fff}
+.avatar-user{background:var(--badge-bg);color:var(--badge-ink)}
+.bubble{padding:14px 16px;border-radius:14px;line-height:1.75;border:1px solid var(--line);background:var(--surface)}
+.bubble-bot{border-top-left-radius:4px}
+.bubble-user{background:var(--accent);border-color:var(--accent);color:#fff;border-top-right-radius:4px}
+.bubble ol{margin:8px 0 0;padding-left:18px}
+.bubble .step{margin-top:10px}
+.sources{margin-top:12px;display:flex;flex-direction:column;gap:6px}
+.source-chip{display:flex;align-items:center;gap:8px;padding:8px 11px;border:1px solid var(--line);border-radius:9px;background:#f8fafc;font-size:12px;color:var(--muted)}
+.source-title{color:var(--ink);font-weight:600}
+.badge{border-radius:999px;padding:3px 9px;font-size:11px;font-weight:700;background:var(--badge-bg);color:var(--badge-ink)}
+.badge-green{background:var(--green-bg);color:var(--green-ink)}
+.badge-amber{background:#fef3c7;color:#92400e}
+.source-chip .badge{margin-left:auto}
+.clarify{padding:12px 14px;border:1px solid var(--warn-line);border-radius:10px;background:var(--warn);font-size:13px;color:var(--warn-ink)}
+.clarify-title{font-weight:700;color:var(--warn-ink-strong);margin-bottom:2px}
+.typing{display:flex;gap:4px;align-items:center;padding:8px 0}
+.dot{width:6px;height:6px;border-radius:999px;background:var(--muted);opacity:.35}
+
+/* ---------- composer ---------- */
+.composer{flex:none;background:var(--surface);border-top:1px solid var(--line);padding:22px 32px 26px}
+.composer-col{width:760px;margin:0 auto;display:flex;flex-direction:column;gap:16px}
+.suggest-label{margin-bottom:10px}
+.suggestions{display:flex;flex-wrap:wrap;gap:10px}
+.chip{padding:9px 16px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--muted);font-size:12.5px}
+.composer-box{display:flex;align-items:center;gap:14px;padding:14px 14px 14px 20px;border:1px solid var(--line);border-radius:16px;background:var(--surface)}
+.composer-placeholder{flex:1;color:var(--muted)}
+.send-btn{width:40px;height:40px;flex:none;border-radius:12px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:16px}
+.composer-note{text-align:center;font-size:11px;color:var(--muted);line-height:1.6}
+
+/* ---------- empty state ---------- */
+.empty{flex:1;display:flex;flex-direction:column;align-items:center;padding-top:120px;text-align:center}
+.empty-icon{width:52px;height:52px;border-radius:14px;background:var(--accent-soft);color:var(--accent);display:flex;align-items:center;justify-content:center;font-size:24px;margin-bottom:18px}
+.empty-title{font-size:24px;font-weight:700;letter-spacing:-.02em;margin-bottom:8px}
+.empty-text{color:var(--muted);width:420px;line-height:1.7}
+
+/* ---------- dashboard ---------- */
+.dash{flex:1;padding:32px 32px 44px;overflow:hidden}
+.dash-col{width:1080px;margin:0 auto;display:flex;flex-direction:column;gap:26px}
+.section-head{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:14px}
+.section-title{font-size:15px;font-weight:700}
+.section-meta{font-size:12px;color:var(--muted)}
+.stats{display:flex;gap:16px}
+.stat{flex:1;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:18px 20px}
+.stat-value{font-size:30px;font-weight:750;letter-spacing:-.02em;line-height:1.1;margin-top:8px}
+.stat-hint{font-size:12px;color:var(--muted);margin-top:6px}
+.cols{display:flex;gap:20px;align-items:flex-start}
+.col-wide{flex:1.35}
+.col-narrow{flex:1;display:flex;flex-direction:column;gap:20px}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:22px 24px}
+.topic{display:flex;align-items:center;gap:14px;padding:11px 0;border-bottom:1px solid var(--line)}
+.topic-last{border-bottom:0}
+.topic-name{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bar{width:150px;height:7px;flex:none;border-radius:999px;background:var(--track);overflow:hidden}
+.bar-fill{height:7px;background:var(--accent);border-radius:999px}
+.topic-num{width:32px;flex:none;text-align:right;font-size:12px;color:var(--muted)}
+.rows{display:flex;flex-direction:column;gap:12px}
+.row{display:flex;align-items:center;gap:12px;font-size:13px}
+.row-key{flex:1;color:var(--muted)}
+.row-val{font-weight:700}
+.alert{padding:15px;border:1px solid var(--warn-line);border-radius:10px;background:var(--warn);color:var(--warn-ink);font-size:13px}
+.alert-title{font-weight:700;color:var(--warn-ink-strong);margin-bottom:3px}
+.note{border:1px dashed var(--line);border-radius:10px;background:var(--surface);padding:14px 16px;font-size:12px;color:var(--muted);line-height:1.7}
+
+/* ---------- login ---------- */
+.login-frame{background:var(--login-bg);display:flex;align-items:center;justify-content:center}
+.login-box{width:940px;border-radius:18px;overflow:hidden;display:flex;background:var(--surface);box-shadow:0 25px 70px rgba(0,0,0,.33)}
+.login-brand{width:494px;flex:none;padding:58px;background:linear-gradient(135deg,#10AF13 0%,#0c4a0e 100%);color:#fff;display:flex;flex-direction:column}
+.login-logo{width:40px;height:40px;border-radius:12px;background:rgba(255,255,255,.13);display:flex;align-items:center;justify-content:center;font-size:19px}
+.login-brand-row{display:flex;align-items:center;gap:12px}
+.login-headline{font-size:38px;font-weight:700;line-height:1.15;letter-spacing:-.02em;margin-top:auto}
+.login-brand-text{color:#d9f3db;line-height:1.8;margin-top:14px}
+.login-form{flex:1;padding:58px}
+.login-title{font-size:30px;font-weight:700;margin:8px 0}
+.login-sub{color:var(--muted)}
+.field{margin-top:18px}
+.field-label{font-size:11px;font-weight:700;color:var(--muted);margin-bottom:6px}
+.input{padding:12px 14px;border:1px solid var(--line);border-radius:10px;background:var(--surface);color:var(--muted)}
+.input-filled{color:var(--ink)}
+.select{display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.btn-primary{margin-top:22px;padding:12px 15px;border-radius:10px;background:var(--accent);color:#fff;font-weight:650;text-align:center}
+.login-foot{text-align:center;font-size:11px;color:var(--label);margin-top:16px;line-height:1.6}
+.form-alert{display:flex;align-items:flex-start;gap:10px;border:1px solid #fecaca;background:#fef2f2;border-radius:10px;padding:13px 15px;color:#991b1b;font-size:12.5px;line-height:1.6;margin-top:18px}
+.form-alert-title{font-weight:700;color:#7f1d1d;margin-bottom:2px}
+.field-error .field-label{color:#b91c1c}
+.field-error .input{border-color:#fca5a5;background:#fff}
+
+/* ---------- mobile ---------- */
+.m-top{height:64px;flex:none;display:flex;align-items:center;gap:12px;padding:0 18px;background:var(--surface);border-bottom:1px solid var(--line)}
+.m-menu{width:36px;height:36px;border:1px solid var(--line);border-radius:8px;display:flex;align-items:center;justify-content:center}
+.m-chat{flex:1;padding:22px 0;overflow:hidden}
+.m-chat-col{padding:0 16px;display:flex;flex-direction:column;gap:18px}
+.m-msg{max-width:96%}
+.m-composer{flex:none;background:var(--surface);border-top:1px solid var(--line);padding:16px 18px 20px;display:flex;flex-direction:column;gap:14px}
+.m-suggestions{display:flex;gap:10px;overflow:hidden}
+.m-login-form{flex:1;padding:38px 25px;background:var(--surface)}
+</style>
+</head>
+<body>
+<div class="stage">
+
+<!-- ============================================================ -->
+<div>
+  <div class="frame-label">01 — Login</div>
+  <div class="frame frame-desktop login-frame">
+    <div class="login-box">
+      <div class="login-brand">
+        <div class="login-brand-row"><div class="login-logo">✦</div><div class="brand-name">CSCoPilot</div></div>
+        <div class="login-headline">Tanya issue-nya.<br>Langsung dapat jawaban.</div>
+        <div class="login-brand-text">Chatbot internal untuk Customer Support. Jelaskan issue, CSCoPilot mencari knowledge yang relevan dan menjawab lengkap dengan source reference.</div>
+      </div>
+      <div class="login-form">
+        <div class="eyebrow">Internal System</div>
+        <div class="login-title">Welcome back</div>
+        <div class="login-sub">Akses dibatasi untuk akun internal yang telah diotorisasi.</div>
+        <div class="field">
+          <div class="field-label">Email perusahaan</div>
+          <div class="input input-filled">nama@timedoor.co.id</div>
+        </div>
+        <div class="field">
+          <div class="field-label">Password</div>
+          <div class="input">••••••••</div>
+        </div>
+        <div class="field">
+          <div class="field-label">Masuk sebagai</div>
+          <div class="select"><span>Customer Support</span><span style="color:var(--muted)">▾</span></div>
+        </div>
+        <div class="btn-primary">Masuk →</div>
+        <div class="login-foot">Authentication provider dihubungkan pada tahap implementation. Tanpa login, chatbot dan histori tidak dapat diakses.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<div>
+  <div class="frame-label">02 — Login: error kredensial salah</div>
+  <div class="frame frame-desktop login-frame">
+    <div class="login-box">
+      <div class="login-brand">
+        <div class="login-brand-row"><div class="login-logo">✦</div><div class="brand-name">CSCoPilot</div></div>
+        <div class="login-headline">Tanya issue-nya.<br>Langsung dapat jawaban.</div>
+        <div class="login-brand-text">Chatbot internal untuk Customer Support. Jelaskan issue, CSCoPilot mencari knowledge yang relevan dan menjawab lengkap dengan source reference.</div>
+      </div>
+      <div class="login-form">
+        <div class="eyebrow">Internal System</div>
+        <div class="login-title">Welcome back</div>
+        <div class="login-sub">Akses dibatasi untuk akun internal yang telah diotorisasi.</div>
+        <div class="form-alert">
+          <span>⚠</span>
+          <div><div class="form-alert-title">Email atau password salah</div><div>Periksa kembali email dan password Anda, lalu coba lagi.</div></div>
+        </div>
+        <div class="field field-error">
+          <div class="field-label">Email perusahaan</div>
+          <div class="input input-filled">nama@timedoor.co.id</div>
+        </div>
+        <div class="field field-error">
+          <div class="field-label">Password</div>
+          <div class="input input-filled">••••••••</div>
+        </div>
+        <div class="field">
+          <div class="field-label">Masuk sebagai</div>
+          <div class="select"><span>Customer Support</span><span style="color:var(--muted)">▾</span></div>
+        </div>
+        <div class="btn-primary">Masuk →</div>
+        <div class="login-foot">Authentication provider dihubungkan pada tahap implementation. Tanpa login, chatbot dan histori tidak dapat diakses.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<div>
+  <div class="frame-label">03 — Chatbot (Customer Support)</div>
+  <div class="frame frame-desktop">
+
+    <div class="sidebar">
+      <div class="brand"><div class="logo">✦</div><div><div class="brand-name">CSCoPilot</div><div class="brand-sub">Support chatbot</div></div></div>
+      <div class="nav">
+        <div class="nav-item">▤ Dashboard</div>
+        <div class="nav-item active">✦ Chatbot</div>
+      </div>
+      <div class="new-chat">＋ New chat</div>
+      <div class="history">
+        <div class="label-caps">Recent</div>
+        <div class="thread active"><div class="thread-title">Login gagal setelah reset password</div><div class="thread-time">Hari ini · 10:24</div></div>
+        <div class="thread"><div class="thread-title">Pembayaran client gagal diproses</div><div class="thread-time">Hari ini · 09:10</div></div>
+        <div class="thread"><div class="thread-title">SOP keterlambatan respons</div><div class="thread-time">Kemarin · 16:40</div></div>
+        <div class="thread"><div class="thread-title">Template balasan pembuka</div><div class="thread-time">Kemarin · 11:02</div></div>
+      </div>
+      <div class="profile"><div class="profile-card">
+        <div class="avatar-circle">CS</div>
+        <div><div class="profile-name">Customer Support</div><div class="profile-role">User · Timedoor Indonesia</div></div>
+        <div class="logout">↪</div>
+      </div></div>
+    </div>
+
+    <div class="main">
+      <div class="topbar">
+        <div><div class="eyebrow">Customer Support Timedoor Indonesia</div><div class="page-title">Login gagal setelah reset password</div></div>
+        <div class="topuser"><div class="avatar-top">CS</div><div><div class="topuser-name">Customer Support</div><div class="topuser-role">User</div></div></div>
+      </div>
+
+      <div class="chat-area"><div class="chat-col">
+
+        <div class="msg msg-bot">
+          <div class="avatar-sq avatar-bot">✦</div>
+          <div class="bubble bubble-bot"><p>Halo, ceritakan issue yang sedang ditangani. Saya akan mencari solusi dari knowledge perusahaan.</p></div>
+        </div>
+
+        <div class="msg msg-user">
+          <div class="avatar-sq avatar-user">CS</div>
+          <div class="bubble bubble-user"><p>Customer tidak bisa login setelah mengganti password.</p></div>
+        </div>
+
+        <div class="msg msg-bot">
+          <div class="avatar-sq avatar-bot">✦</div>
+          <div class="bubble bubble-bot">
+            <p>Kemungkinan penyebabnya:</p>
+            <ol>
+              <li>Session lama masih aktif di perangkat customer.</li>
+              <li>Password baru belum sepenuhnya tersinkronisasi.</li>
+            </ol>
+            <p class="step">Langkah yang disarankan: minta customer logout dari seluruh perangkat, lalu coba login kembali melalui browser incognito. Jika masih gagal, lakukan reset password ulang.</p>
+            <div class="sources">
+              <div class="source-chip"><span>▤</span><span class="source-title">Panduan Reset Password</span><span class="badge badge-green">FAQ</span></div>
+              <div class="source-chip"><span>▤</span><span class="source-title">Authentication Troubleshooting v2</span><span class="badge badge-green">Troubleshooting</span></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="msg msg-user">
+          <div class="avatar-sq avatar-user">CS</div>
+          <div class="bubble bubble-user"><p>Customer bilang sudah coba incognito, masih gagal juga.</p></div>
+        </div>
+
+        <div class="msg msg-bot">
+          <div class="avatar-sq avatar-bot">✦</div>
+          <div class="bubble bubble-bot">
+            <div class="clarify"><div class="clarify-title">Butuh informasi tambahan</div>Apakah customer menerima pesan error tertentu, atau halaman login hanya diam/loading terus?</div>
+          </div>
+        </div>
+
+      </div></div>
+
+      <div class="composer"><div class="composer-col">
+        <div>
+          <div class="label-caps suggest-label">Coba tanyakan</div>
+          <div class="suggestions">
+            <div class="chip">Cari SOP keterlambatan respons</div>
+            <div class="chip">Bagaimana menangani pembayaran gagal?</div>
+            <div class="chip">Template balasan pembuka</div>
+          </div>
+        </div>
+        <div class="composer-box"><div class="composer-placeholder">Jelaskan issue customer...</div><div class="send-btn">➤</div></div>
+        <div class="composer-note">CSCoPilot menjawab berdasarkan knowledge yang tersedia. Selalu periksa source sebelum digunakan kepada client.</div>
+      </div></div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<div>
+  <div class="frame-label">04 — Chatbot: percakapan baru (empty state) + loading</div>
+  <div class="frame frame-desktop">
+
+    <div class="sidebar">
+      <div class="brand"><div class="logo">✦</div><div><div class="brand-name">CSCoPilot</div><div class="brand-sub">Support chatbot</div></div></div>
+      <div class="nav">
+        <div class="nav-item">▤ Dashboard</div>
+        <div class="nav-item active">✦ Chatbot</div>
+      </div>
+      <div class="new-chat">＋ New chat</div>
+      <div class="history">
+        <div class="label-caps">Recent</div>
+        <div class="thread"><div class="thread-title">Login gagal setelah reset password</div><div class="thread-time">Hari ini · 10:24</div></div>
+        <div class="thread"><div class="thread-title">Pembayaran client gagal diproses</div><div class="thread-time">Hari ini · 09:10</div></div>
+        <div class="thread"><div class="thread-title">SOP keterlambatan respons</div><div class="thread-time">Kemarin · 16:40</div></div>
+        <div class="thread"><div class="thread-title">Template balasan pembuka</div><div class="thread-time">Kemarin · 11:02</div></div>
+      </div>
+      <div class="profile"><div class="profile-card">
+        <div class="avatar-circle">CS</div>
+        <div><div class="profile-name">Customer Support</div><div class="profile-role">User · Timedoor Indonesia</div></div>
+        <div class="logout">↪</div>
+      </div></div>
+    </div>
+
+    <div class="main">
+      <div class="topbar">
+        <div><div class="eyebrow">Customer Support Timedoor Indonesia</div><div class="page-title">New conversation</div></div>
+        <div class="topuser"><div class="avatar-top">CS</div><div><div class="topuser-name">Customer Support</div><div class="topuser-role">User</div></div></div>
+      </div>
+
+      <div class="empty">
+        <div class="empty-icon">✦</div>
+        <div class="empty-title">Mulai percakapan baru</div>
+        <div class="empty-text">Jelaskan issue customer dengan bahasa natural. CSCoPilot akan mencari knowledge yang relevan dan memberikan jawaban beserta source reference.</div>
+
+        <div style="width:760px;padding:0 24px;margin-top:40px;display:flex;flex-direction:column;gap:22px;text-align:left">
+          <div class="msg msg-user">
+            <div class="avatar-sq avatar-user">CS</div>
+            <div class="bubble bubble-user"><p>Customer komplain pembayaran gagal terus.</p></div>
+          </div>
+          <div class="msg msg-bot">
+            <div class="avatar-sq avatar-bot">✦</div>
+            <div class="bubble bubble-bot"><div class="typing"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="composer"><div class="composer-col">
+        <div>
+          <div class="label-caps suggest-label">Coba tanyakan</div>
+          <div class="suggestions">
+            <div class="chip">Cari SOP keterlambatan respons</div>
+            <div class="chip">Bagaimana menangani pembayaran gagal?</div>
+            <div class="chip">Template balasan pembuka</div>
+          </div>
+        </div>
+        <div class="composer-box"><div class="composer-placeholder">Jelaskan issue customer...</div><div class="send-btn">➤</div></div>
+        <div class="composer-note">CSCoPilot menjawab berdasarkan knowledge yang tersedia. Selalu periksa source sebelum digunakan kepada client.</div>
+      </div></div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<div>
+  <div class="frame-label">05 — Dashboard (stakeholder)</div>
+  <div class="frame frame-desktop">
+
+    <div class="sidebar">
+      <div class="brand"><div class="logo">✦</div><div><div class="brand-name">CSCoPilot</div><div class="brand-sub">Support chatbot</div></div></div>
+      <div class="nav">
+        <div class="nav-item active">▤ Dashboard</div>
+      </div>
+      <div class="history"></div>
+      <div class="profile"><div class="profile-card">
+        <div class="avatar-circle">PM</div>
+        <div><div class="profile-name">Project Manager</div><div class="profile-role">Stakeholder · Timedoor Indonesia</div></div>
+        <div class="logout">↪</div>
+      </div></div>
+    </div>
+
+    <div class="main">
+      <div class="topbar">
+        <div><div class="eyebrow">Customer Support Timedoor Indonesia</div><div class="page-title">Dashboard</div></div>
+        <div class="topuser"><div class="avatar-top">PM</div><div><div class="topuser-name">Project Manager</div><div class="topuser-role">Stakeholder</div></div></div>
+      </div>
+
+      <div class="dash"><div class="dash-col">
+
+        <div>
+          <div class="section-head"><div class="section-title">Ringkasan minggu ini</div><div class="section-meta">1–7 Agustus 2026</div></div>
+          <div class="stats">
+            <div class="stat"><div class="label-caps">Percakapan</div><div class="stat-value">128</div><div class="stat-hint">Total sesi chatbot</div></div>
+            <div class="stat"><div class="label-caps">Agent aktif</div><div class="stat-value">7</div><div class="stat-hint">Dari 9 agent pilot</div></div>
+            <div class="stat"><div class="label-caps">Jawaban dengan source</div><div class="stat-value">86%</div><div class="stat-hint">Sisanya fallback / klarifikasi</div></div>
+            <div class="stat"><div class="label-caps">Butuh klarifikasi</div><div class="stat-value">19%</div><div class="stat-hint">Chatbot minta info tambahan</div></div>
+          </div>
+        </div>
+
+        <div class="cols">
+          <div class="col-wide"><div class="panel">
+            <div class="section-head"><div class="section-title">Issue paling sering ditanyakan</div><div class="section-meta">7 hari terakhir</div></div>
+            <div class="topic"><div class="topic-name">Login &amp; reset password</div><div class="bar"><div class="bar-fill" style="width:150px"></div></div><div class="topic-num">42</div></div>
+            <div class="topic"><div class="topic-name">Pembayaran gagal diproses</div><div class="bar"><div class="bar-fill" style="width:96px"></div></div><div class="topic-num">27</div></div>
+            <div class="topic"><div class="topic-name">Keterlambatan respons</div><div class="bar"><div class="bar-fill" style="width:68px"></div></div><div class="topic-num">19</div></div>
+            <div class="topic"><div class="topic-name">Permintaan template balasan</div><div class="bar"><div class="bar-fill" style="width:50px"></div></div><div class="topic-num">14</div></div>
+            <div class="topic topic-last"><div class="topic-name">Akses akun terkunci</div><div class="bar"><div class="bar-fill" style="width:32px"></div></div><div class="topic-num">9</div></div>
+          </div></div>
+
+          <div class="col-narrow">
+            <div class="panel">
+              <div class="section-head"><div class="section-title">Status sinkronisasi Notion</div></div>
+              <div class="rows">
+                <div class="row"><div class="row-key">Sinkronisasi terakhir</div><div class="row-val">Hari ini · 08:00</div></div>
+                <div class="row"><div class="row-key">Dokumen terindeks</div><div class="row-val">24</div></div>
+                <div class="row"><div class="row-key">Interval sync</div><div class="row-val">Setiap 6 jam</div></div>
+                <div class="row"><div class="row-key">Status</div><div class="badge badge-green">Berhasil</div></div>
+              </div>
+            </div>
+            <div class="panel">
+              <div class="section-head"><div class="section-title">Perlu perhatian</div></div>
+              <div class="alert"><div class="alert-title">3 pertanyaan tanpa source</div>Chatbot tidak menemukan knowledge yang cocok. Knowledge Owner perlu melengkapi dokumentasi terkait topik ini di Notion.</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="note"><b>Catatan scope MVP.</b> Dashboard ini hanya menampilkan ringkasan operasional: volume percakapan, topik yang sering muncul, kualitas source, dan status sync. Analytics lanjutan (grafik tren, export, filter kompleks) berada di luar scope MVP.</div>
+
+      </div></div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<div>
+  <div class="frame-label">06 — Mobile: Chatbot</div>
+  <div class="frame-mobile">
+    <div class="m-top"><div class="m-menu">☰</div><div class="brand-name">CSCoPilot</div></div>
+    <div class="m-chat"><div class="m-chat-col">
+      <div class="msg msg-bot m-msg">
+        <div class="avatar-sq avatar-bot">✦</div>
+        <div class="bubble bubble-bot"><p>Halo, ceritakan issue yang sedang ditangani.</p></div>
+      </div>
+      <div class="msg msg-user m-msg">
+        <div class="avatar-sq avatar-user">CS</div>
+        <div class="bubble bubble-user"><p>Customer tidak bisa login setelah ganti password.</p></div>
+      </div>
+      <div class="msg msg-bot m-msg">
+        <div class="avatar-sq avatar-bot">✦</div>
+        <div class="bubble bubble-bot">
+          <p>Kemungkinan session lama masih aktif atau password belum tersinkronisasi. Minta customer logout dari seluruh perangkat lalu login via incognito.</p>
+          <div class="sources">
+            <div class="source-chip"><span>▤</span><span class="source-title">Panduan Reset Password</span><span class="badge badge-green">FAQ</span></div>
+          </div>
+        </div>
+      </div>
+    </div></div>
+    <div class="m-composer">
+      <div class="m-suggestions"><div class="chip">Cari SOP keterlambatan respons</div><div class="chip">Pembayaran gagal</div></div>
+      <div class="composer-box"><div class="composer-placeholder">Jelaskan issue customer...</div><div class="send-btn">➤</div></div>
+      <div class="composer-note">Selalu periksa source sebelum digunakan kepada client.</div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<div>
+  <div class="frame-label">07 — Mobile: Login</div>
+  <div class="frame-mobile">
+    <div class="m-login-form">
+      <div class="login-brand-row" style="margin-bottom:28px"><div class="logo">✦</div><div class="brand-name">CSCoPilot</div></div>
+      <div class="eyebrow">Internal System</div>
+      <div class="login-title">Welcome back</div>
+      <div class="login-sub">Akses dibatasi untuk akun internal yang telah diotorisasi.</div>
+      <div class="field"><div class="field-label">Email perusahaan</div><div class="input input-filled">nama@timedoor.co.id</div></div>
+      <div class="field"><div class="field-label">Password</div><div class="input">••••••••</div></div>
+      <div class="field"><div class="field-label">Masuk sebagai</div><div class="select"><span>Customer Support</span><span style="color:var(--muted)">▾</span></div></div>
+      <div class="btn-primary">Masuk →</div>
+      <div class="login-foot">Tanpa login, chatbot dan histori tidak dapat diakses.</div>
+    </div>
+  </div>
+</div>
+
+</div>
+</body>
+</html>

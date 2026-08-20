@@ -1,0 +1,35 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 150 33% 97%;
+    --foreground: 130 23% 11%;
+    --card: 0 0% 100%;
+    --card-foreground: 130 23% 11%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 130 23% 11%;
+    --primary: 121 83% 37%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 130 24% 91%;
+    --secondary-foreground: 130 23% 11%;
+    --muted: 130 20% 94%;
+    --muted-foreground: 130 10% 43%;
+    --accent: 124 58% 93%;
+    --accent-foreground: 121 83% 30%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 130 20% 89%;
+    --input: 130 20% 89%;
+    --ring: 121 83% 37%;
+    --radius: 0.875rem; /* ponytail: add dark mode tokens when the design system grows. */
+  }
+
+  * { @apply border-border; }
+  body { @apply bg-background text-foreground antialiased; }
+}
+
+@layer utilities {
+  .text-balance { text-wrap: balance; }
+}
