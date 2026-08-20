@@ -4,3 +4,21 @@ out/
 .env*
 !.env.example
 *.log
+
+# Local design exports and generated artifacts
+_pptx_extract/
+_pptx_work/
+*.pptx
+*.pdf
+*.png
+*.jpg
+*.jpeg
+CSCoPilot-Design-Spec.md
+CSCoPilot-Figma-Import.html
+CSCoPilot-Wireframe*.html
+cs-copilot-slides.html
+draft-penjelasan-cscopilot.html
+qna-client-cscopilot.html
+_extracted_raw.txt
+_text_ops.txt
+inwan/
