@@ -7,6 +7,6 @@ export function readText(value: unknown, field = "content", max = 12000): string
 
 export function errorResponse(error: unknown) {
   const message = error instanceof Error ? error.message : "Unexpected server error";
-  const status = /required|too long|invalid/i.test(message) ? 400 : 500;
+  const status = /auth|session|credential/i.test(message) ? 401 : /required|too long|invalid/i.test(message) ? 400 : 500;
   return Response.json({ error: message }, { status });
 }

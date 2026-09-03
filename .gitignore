@@ -5,6 +5,10 @@ out/
 !.env.example
 *.log
 
+# Local secrets
+.env.local
+.env.*.local
+
 # Local design exports and generated artifacts
 _pptx_extract/
 _pptx_work/
@@ -23,6 +27,12 @@ _extracted_raw.txt
 _text_ops.txt
 inwan/
 
+# Screenshots
+ss-image/
+
+# Claude Code local state
+.claude/
+
 # Local project documents
 CSCoPilot-PRD.md
 CSCoPilot-Mandays.md
@@ -30,3 +40,4 @@ CSCoPilot-Project-Document-Updated.md
 PRD-CSCoPilot-Chatbot.md
 Team4-CScopilot.md
 Inwan-Store-Notion-Knowledge.md
+TASKS.md

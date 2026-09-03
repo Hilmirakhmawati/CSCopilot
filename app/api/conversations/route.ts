@@ -6,6 +6,8 @@ export async function POST(request: Request) {
     const user = await requireUser(request);
     const body = await request.json().catch(() => ({}));
     const db = getSupabaseAdmin();
+    const { error: profileError } = await db.from("profiles").upsert({ id: user.id, email: user.email ?? `${user.id}@internal` }, { onConflict: "id" });
+    if (profileError) throw profileError;
     const { data, error } = await db.from("conversations").insert({ created_by: user.id, title: body.title ?? "New support case" }).select("id,title,status,created_at").single();
     if (error) throw error;
     return Response.json(data, { status: 201 });
