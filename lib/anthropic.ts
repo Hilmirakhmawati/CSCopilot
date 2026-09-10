@@ -1,18 +1,43 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { GroundedAnswer, KnowledgeDocument } from "./assistant-types";
-import { continuationSignal, isClosingMessage } from "./retrieval";
+import { continuationSignal, greetingAnswer, isClosingMessage, isGreetingOnly } from "./retrieval";
 import { withRetry } from "./retry";
 
+const DEFAULT_MODEL = "claude-sonnet-5";
+
+function configuredApiKey() {
+  const key = process.env.ANTHROPIC_API_KEY?.trim();
+  return key && !/^(your[_-].*|change[_-]?me|replace[_-]?me|xxx+)$/i.test(key) ? key : undefined;
+}
+
 function client() {
-  if (!process.env.ANTHROPIC_API_KEY) throw new Error("ANTHROPIC_API_KEY is not configured");
-  return new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: 30_000, maxRetries: 0 });
+  const apiKey = configuredApiKey();
+  if (!apiKey) throw new Error("ANTHROPIC_API_KEY is not configured");
+  return new Anthropic({ apiKey, timeout: 30_000, maxRetries: 0 });
+}
+
+function isUnavailableAnthropicError(error: unknown) {
+  if (!error || typeof error !== "object") return false;
+  const value = error as { status?: unknown; message?: unknown };
+  const status = value.status;
+  const message = typeof value.message === "string" ? value.message : "";
+  return status === 401 || status === 403 || status === 404 || /no active credentials|model_not_found|invalid api key|authentication/i.test(message);
 }
 
 function words(value: string) {
   return new Set(value.toLowerCase().match(/[a-z0-9À-ɏ]+/g) ?? []);
 }
 
-function isGroundedAnswer(value: unknown): value is GroundedAnswer {
+// Claude never sees document UUIDs (kept out of the prompt so it can't leak
+// them into customer text), so it can only cite REFERENCE N. The model's
+// output shape is validated separately from the app-wide GroundedAnswer type,
+// then reference_index is mapped back to a real document_id server-side.
+type ModelCitation = { reference_index: number; quote: string };
+type ModelAnswer = Omit<GroundedAnswer, "citations"> & { citations: ModelCitation[] };
+
+const MAX_QUOTE_LENGTH = 600;
+
+function isModelAnswer(value: unknown): value is ModelAnswer {
   if (!value || typeof value !== "object") return false;
   const answer = value as Record<string, unknown>;
   const strings = ["intent", "summary", "recommended_action", "answer", "draft_reply"];
@@ -23,8 +48,48 @@ function isGroundedAnswer(value: unknown): value is GroundedAnswer {
   return answer.citations.every((citation) => {
     if (!citation || typeof citation !== "object") return false;
     const item = citation as Record<string, unknown>;
-    return typeof item.document_id === "string" && typeof item.title === "string" && typeof item.quote === "string" && (item.url === null || typeof item.url === "string");
+    return (
+      Number.isInteger(item.reference_index) && (item.reference_index as number) >= 1 &&
+      typeof item.quote === "string" && item.quote.length > 0 && item.quote.length <= MAX_QUOTE_LENGTH
+    );
   });
+}
+
+// Scans for the first balanced top-level {...} object, string- and
+// escape-aware, so stray braces inside prose or quoted strings elsewhere in
+// the model's output can't widen or corrupt the match (the previous greedy
+// regex matched from the first "{" to the very last "}" in the text).
+export function extractFirstJsonObject(text: string): string | undefined {
+  const start = text.indexOf("{");
+  if (start === -1) return undefined;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < text.length; i += 1) {
+    const char = text[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === '"') inString = false;
+      continue;
+    }
+    if (char === '"') inString = true;
+    else if (char === "{") depth += 1;
+    else if (char === "}") {
+      depth -= 1;
+      if (depth === 0) return text.slice(start, i + 1);
+    }
+  }
+  return undefined;
+}
+
+// reference_index is 1-based and matches the REFERENCE N order sent in the
+// prompt. Out-of-range indexes are dropped rather than failing the whole
+// answer — a slightly wrong citation shouldn't sink an otherwise-valid reply.
+export function mapCitations(citations: ModelCitation[], documents: KnowledgeDocument[]): GroundedAnswer["citations"] {
+  return citations
+    .map((citation) => documents[citation.reference_index - 1] && { document_id: documents[citation.reference_index - 1].id, title: documents[citation.reference_index - 1].title, url: documents[citation.reference_index - 1].url, quote: citation.quote })
+    .filter((citation): citation is GroundedAnswer["citations"][number] => Boolean(citation));
 }
 
 function fallback(issue: string, documents: KnowledgeDocument[], history: Array<{ role: "user" | "assistant"; content: string }> = []): GroundedAnswer {
@@ -77,7 +142,7 @@ function fallback(issue: string, documents: KnowledgeDocument[], history: Array<
   // Answer with the document's own customer-safe content first; sources stay attached as citations.
   const summaryLine = best.content.split("\n").find((line) => line.startsWith("Customer Safe Summary:"))?.replace("Customer Safe Summary:", "").trim();
   const actionLine = best.content.split("\n").find((line) => line.startsWith("Customer Action:"))?.replace("Customer Action:", "").trim();
-  const answer = [summaryLine && `Kemungkinan penyebab: ${summaryLine}.`, actionLine && `Langkah penanganan: ${actionLine}.`].filter(Boolean).join("\n\n") || `Dokumen relevan ditemukan: ${best.title}. Respons final memerlukan review Customer Support.`;
+  const answer = [summaryLine && `Kemungkinan penyebab: ${summaryLine}.`, actionLine && `Langkah penanganan: ${actionLine}.`].filter(Boolean).join("\n\n") || "Kami sedang meninjau kendala yang disampaikan dan akan memverifikasi penanganan yang sesuai.";
   return {
     intent: "Support issue",
     summary: `Kemungkinan penyebab dari: ${best.title}.`,
@@ -91,37 +156,55 @@ function fallback(issue: string, documents: KnowledgeDocument[], history: Array<
 }
 
 const system = `You are CSCoPilot, an internal Customer Support decision-support assistant.
+Handle greetings naturally and briefly. For greeting-only messages, reply in the user's language with one friendly greeting and one short question; do not explain capabilities or mention sources. For a greeting plus an issue, acknowledge it briefly, then answer the issue using the supplied sources. In an existing conversation, preserve context when the user greets again.
+Respond in Indonesian for Indonesian input, English for English input, and mirror mixed language naturally.
 Notion sources are the only authority for company-specific claims. Use only supplied sources.
-If sources are insufficient, ask focused clarification questions and say what is missing.
+Treat source metadata as internal evidence only. Never copy SOURCE labels, IDs, UUIDs, titles, URLs, scores, or metadata into answer or draft_reply. Put source IDs only in structured citations.
+Only put something in missing_context if the customer's message truly lacks it and the agent cannot proceed without it. Never list information already provided (order number, account, error message, etc.) or "nice to have" details. Routine manual verification steps that the agent always performs as part of the SOP (checking a database, confirming a balance) belong in recommended_action, not missing_context — missing_context is only for what the customer still needs to supply.
 Never invent policies, refunds, timelines, credentials, or troubleshooting steps.
-Every supported company-specific claim needs a citation using the exact source ID.
+Every supported company-specific claim needs a citation using the REFERENCE number it came from.
 Produce an editable customer-facing draft, never send it, and never claim it was sent.
 Return JSON matching the requested schema.`;
 
 export async function generateGroundedAnswer(issue: string, documents: KnowledgeDocument[], history: Array<{ role: "user" | "assistant"; content: string }> = []): Promise<GroundedAnswer> {
-  if (!process.env.ANTHROPIC_API_KEY || process.env.CSCOPILOT_NO_AI === "1") return fallback(issue, documents, history);
-  const context = documents.map((doc, index) => `SOURCE ${index + 1}\nID: ${doc.id}\nTITLE: ${doc.title}\nURL: ${doc.url ?? ""}\nCONTENT:\n${doc.content}`).join("\n\n");
-  const response = await withRetry(() => client().messages.create({
-    model: "claude-opus-5",
-    max_tokens: 1800,
-    thinking: { type: "adaptive" } as never,
-    system,
-    messages: [
-      ...history,
-      { role: "user", content: `ISSUE:\n${issue}\n\nKNOWLEDGE CONTEXT:\n${context || "No reliable source found."}\n\nReturn JSON with keys: intent, summary, missing_context, recommended_action, answer, draft_reply, citations (document_id,title,url,quote), confidence (low|medium|high).` },
-    ],
-  } as never));
+  if (isGreetingOnly(issue)) return greetingAnswer(issue, history);
+  if (!configuredApiKey() || process.env.CSCOPILOT_NO_AI === "1") return fallback(issue, documents, history);
+  const context = documents.map((doc, index) => `REFERENCE ${index + 1}\nCONTENT:\n${doc.content}`).join("\n\n");
+  let response;
+  try {
+    response = await withRetry(() => client().messages.create({
+      model: process.env.ANTHROPIC_MODEL?.trim() || process.env.CLAUDE_MODEL?.trim() || DEFAULT_MODEL,
+      max_tokens: 1800,
+      thinking: { type: "adaptive" } as never,
+      system,
+      messages: [
+        ...history,
+        { role: "user", content: `ISSUE:\n${issue}\n\nKNOWLEDGE CONTEXT:\n${context || "No reliable source found."}\n\nReturn only JSON with keys: intent, summary, missing_context, recommended_action, answer, draft_reply, citations (reference_index,quote), confidence (low|medium|high). Each reference_index must be a 1-based REFERENCE number from the context. Use [] when no source supports the answer. Do not include markdown fences.` },
+      ],
+    } as never));
+  } catch (error) {
+    if (isUnavailableAnthropicError(error)) return fallback(issue, documents, history);
+    throw error;
+  }
   if ((response as { stop_reason?: string }).stop_reason === "refusal") throw new Error("Claude refused this request");
   const text = response.content.find((block) => block.type === "text")?.text;
   if (!text) throw new Error("Claude returned no answer");
+  const jsonText = extractFirstJsonObject(text);
   let parsed: unknown;
   try {
-    parsed = JSON.parse(text);
+    if (!jsonText) throw new Error("missing JSON object");
+    parsed = JSON.parse(jsonText);
   } catch {
-    throw new Error("Claude returned invalid answer");
+    // A malformed model response must not break the support workflow. The
+    // deterministic answer still uses only the retrieved customer-safe fields.
+    console.warn("Claude returned non-JSON output; using grounded fallback");
+    return fallback(issue, documents, history);
   }
-  if (!isGroundedAnswer(parsed)) throw new Error("Claude returned invalid answer");
-  return parsed;
+  if (!isModelAnswer(parsed)) {
+    console.warn("Claude returned an unexpected schema; using grounded fallback");
+    return fallback(issue, documents, history);
+  }
+  return { ...parsed, citations: mapCitations(parsed.citations, documents) };
 }
 
 export { fallback as generateNoAiAnswer };

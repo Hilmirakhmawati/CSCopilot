@@ -10,10 +10,10 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.32.1",
+    "@anthropic-ai/sdk": "^0.124.0",
     "@notionhq/client": "^2.3.0",
-    "@supabase/supabase-js": "^2.58.0",
     "@radix-ui/react-slot": "^1.2.3",
+    "@supabase/supabase-js": "^2.58.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "lucide-react": "^0.468.0",

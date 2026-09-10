@@ -1,8 +1,7 @@
-import { generateGroundedAnswer } from "@/lib/anthropic";
 import { requireUser, getSupabaseAdmin } from "@/lib/db";
-import { retrieveKnowledge } from "@/lib/retrieval";
+import { processConversationMessage } from "@/lib/message-processing";
 import { errorResponse, readText } from "@/lib/validation";
-import { validateCitations } from "@/lib/assistant-check";
+import { enforceRateLimit, requestKey } from "@/lib/rate-limit";
 
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -24,22 +23,11 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const user = await requireUser(request);
+    enforceRateLimit(requestKey(request, user.id));
     const { id } = await params;
     const issue = readText((await request.json()).content);
-    const db = getSupabaseAdmin();
-    const owner = await db.from("conversations").select("id").eq("id", id).eq("created_by", user.id).single();
-    if (owner.error) throw new Error("Conversation not found");
-    const prior = await db.from("messages").select("role,content").eq("conversation_id", id).neq("role", "system").order("created_at", { ascending: true }).limit(20);
-    if (prior.error) throw prior.error;
-    const history = (prior.data ?? []).slice(-10).map((message) => ({ role: message.role as "user" | "assistant", content: message.content as string }));
-    const input = await db.from("messages").insert({ conversation_id: id, role: "user", content: issue }).select("id").single();
-    if (input.error) throw input.error;
-    const documents = await retrieveKnowledge(issue, history);
-    const answer = await generateGroundedAnswer(issue, documents, history);
-    answer.citations = validateCitations(answer.citations ?? [], new Set(documents.map((doc) => doc.id)));
-    const output = await db.from("messages").insert({ conversation_id: id, role: "assistant", content: answer.answer, citations: answer.citations }).select("id,content,citations,created_at").single();
-    if (output.error) throw output.error;
-    await db.from("conversations").update({ updated_at: new Date().toISOString() }).eq("id", id);
-    return Response.json({ ...answer, message_id: output.data.id, created_at: output.data.created_at, sources: documents });
+    const idempotencyKey = request.headers.get("Idempotency-Key") || undefined;
+    const result = await processConversationMessage(getSupabaseAdmin(), id, user.id, issue, idempotencyKey);
+    return Response.json(result);
   } catch (error) { return errorResponse(error); }
 }

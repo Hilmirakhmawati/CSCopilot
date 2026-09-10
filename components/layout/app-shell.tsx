@@ -1,19 +1,30 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Bot, LogOut, Menu, Sparkles, X } from "lucide-react";
+import { Bot, LogOut, Menu, ShieldCheck, Sparkles, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { getSupabasePublic } from "@/lib/db";
 
-export function AppShell({ children, active }: { children: React.ReactNode; active: "dashboard" | "knowledge" | "assistant" }) {
+export function AppShell({ children, active }: { children: React.ReactNode; active: "dashboard" | "knowledge" | "assistant" | "audit" }) {
   const router = useRouter();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
+  // Client-side only for showing/hiding the nav link — the API route
+  // (requireAdmin) is the actual security boundary, this never gates access.
+  useEffect(() => {
+    const supabase = getSupabasePublic();
+    supabase.auth.getUser().then(({ data }) => {
+      if (!data.user) return;
+      return supabase.from("profiles").select("role").eq("id", data.user.id).single();
+    }).then((result) => setIsAdmin(result?.data?.role === "admin")).catch(() => setIsAdmin(false));
+  }, []);
   const nav = [
     { href: "/assistant", key: "assistant" as const, label: "AI Assistant", icon: Bot },
+    ...(isAdmin ? [{ href: "/admin/audit", key: "audit" as const, label: "Audit Log", icon: ShieldCheck }] : []),
   ];
 
   async function logout() {

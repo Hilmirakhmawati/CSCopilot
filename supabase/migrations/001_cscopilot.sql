@@ -39,6 +39,8 @@ create table if not exists knowledge_documents (
   synced_at timestamptz not null default now()
 );
 create index if not exists knowledge_documents_search_idx on knowledge_documents using gin(search_vector);
+create index if not exists messages_conversation_created_idx on messages (conversation_id, created_at);
+create index if not exists conversations_created_by_updated_idx on conversations (created_by, updated_at desc);
 
 create or replace function search_knowledge_documents(search_query text, result_limit int default 5)
 returns table (id uuid, title text, url text, content text, category text, synced_at timestamptz)

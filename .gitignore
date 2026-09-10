@@ -33,6 +33,10 @@ ss-image/
 # Claude Code local state
 .claude/
 
+# Supabase CLI local cache
+supabase/.temp/
+*.tsbuildinfo
+
 # Local project documents
 CSCoPilot-PRD.md
 CSCoPilot-Mandays.md

@@ -30,6 +30,12 @@ export function getSupabaseUser(request: Request) {
 export async function requireUser(request: Request) {
   const { data, error } = await getSupabaseUser(request);
   if (data.user) return data.user;
-  if (process.env.DEMO_USER_ID) return { id: process.env.DEMO_USER_ID, email: "demo@internal" };
   throw new Error(error?.message || "Authentication required");
+}
+
+export async function requireAdmin(request: Request) {
+  const user = await requireUser(request);
+  const { data, error } = await getSupabaseAdmin().from("profiles").select("role").eq("id", user.id).single();
+  if (error || data?.role !== "admin") throw new Error("Admin access required");
+  return user;
 }
