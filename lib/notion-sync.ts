@@ -1,6 +1,14 @@
-import { createHash } from "node:crypto";
 import { getSupabaseAdmin } from "./db";
 import { readChatbotAllowedDatabaseRows, findChildDatabaseId } from "./notion";
+
+// Web Crypto (not Node's `crypto` module) so this file has no Node-builtin
+// import — instrumentation.ts dynamically imports it, and Next bundles
+// that dynamic import for the edge runtime too, where Node builtins
+// (including "node:crypto"/"crypto") don't resolve.
+async function sha256Hex(text: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
 
 const DATABASE_TITLE = "Maintenance Task Testing";
 
@@ -15,7 +23,7 @@ export async function syncNotionKnowledge({ pageId, actorId, actionPrefix }: { p
   const db = getSupabaseAdmin();
   const results: { title: string; action: string }[] = [];
   for (const row of rows) {
-    const contentHash = createHash("sha256").update(row.content).digest("hex");
+    const contentHash = await sha256Hex(row.content);
     const existing = await db.from("knowledge_documents").select("id,content_hash").eq("notion_page_id", row.notion_page_id).maybeSingle();
     let action: "inserted" | "updated" | "unchanged" = "inserted";
     if (existing.data?.content_hash === contentHash) action = "unchanged";

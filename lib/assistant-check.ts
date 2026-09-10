@@ -1,4 +1,4 @@
-import assert from "node:assert/strict";
+import assert from "assert/strict";
 import { mapCitations, extractFirstJsonObject } from "./anthropic";
 import { POINT_ARTICLE_TITLE_MATCHES, pointArticleTitle, isPointTopic } from "./retrieval";
 import type { Citation, KnowledgeDocument } from "./assistant-types";

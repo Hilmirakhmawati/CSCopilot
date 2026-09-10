@@ -2,8 +2,17 @@
 // Next 15 — no config flag needed). Fail fast on missing required config
 // instead of letting the first request hit an obscure downstream error.
 export async function register() {
-  if (process.env.NEXT_RUNTIME !== "nodejs") return;
+  // Positive-form runtime check (not an early-return negation): Next.js's
+  // webpack config only elides this dynamic-import branch from the edge
+  // bundle when it matches this exact `if (NEXT_RUNTIME === "nodejs")`
+  // shape. An early-return negation left `import("./lib/notion-sync")`
+  // (which pulls in Node's `crypto`) reachable in the edge compile pass.
+  if (process.env.NEXT_RUNTIME === "nodejs") {
+    await registerNode();
+  }
+}
 
+async function registerNode() {
   const required = ["NEXT_PUBLIC_SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_ANON_KEY", "SUPABASE_SERVICE_ROLE_KEY"];
   const missing = required.filter((name) => !process.env[name]?.trim());
   if (missing.length > 0) {
