@@ -69,6 +69,9 @@ export default function AuditPage() {
                   <div className="min-w-0">
                     <p className="font-medium">{row.action} <span className="text-muted-foreground">· {row.entity_type}</span></p>
                     <p className="truncate text-sm text-muted-foreground">{row.profiles?.email ?? "system"} {row.entity_id ? `· ${row.entity_id.slice(0, 8)}` : ""}</p>
+                    {typeof row.metadata?.query === "string" && (
+                      <p className="truncate text-sm italic text-muted-foreground">"{row.metadata.query}"</p>
+                    )}
                   </div>
                   <div className="flex items-center gap-2">
                     <Badge variant="outline">{new Date(row.created_at).toLocaleString()}</Badge>

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Check, ChevronDown, Clipboard, FileText, LogOut, Menu, Plus, Send, Sparkles, Trash2, X } from "lucide-react";
+import { Check, ChevronDown, Clipboard, FileText, History, LogOut, Menu, Plus, Send, Sparkles, Trash2, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { getSupabasePublic } from "@/lib/db";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -12,6 +12,7 @@ import { Textarea } from "@/components/ui/textarea";
 import type { Citation, GroundedAnswer } from "@/lib/assistant-types";
 
 type Conversation = { id: string; title: string | null; updated_at?: string };
+type DraftVersion = { id: string; version: number; content: string; created_at: string };
 type Message = { id: string; role: "user" | "assistant" | "system"; content: string; citations?: Citation[]; created_at?: string };
 type AssistantResponse = GroundedAnswer & { message_id: string; created_at?: string; error?: string };
 type NewConversationResponse = AssistantResponse & { conversation: Conversation };
@@ -85,10 +86,14 @@ export default function AssistantPage() {
   // Tracks the last-saved text so the button can show a persistent "Tersimpan"
   // state instead of a transient one that looks like the save reverted.
   const [savedDraft, setSavedDraft] = useState<string | null>(null);
+  const [history, setHistory] = useState<DraftVersion[] | null>(null);
+  const [restoredFromVersion, setRestoredFromVersion] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [approved, setApproved] = useState(false);
   const [approving, setApproving] = useState(false);
+  const [rejected, setRejected] = useState(false);
+  const [rejecting, setRejecting] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -102,13 +107,13 @@ export default function AssistantPage() {
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, loading]);
 
   async function selectConversation(id: string) {
-    setError(""); setMobileOpen(false); setActiveId(id); setConversationId(id); setAnswer(null); setDraft(""); setDraftId(null); setApproved(false); setApproving(false); setSavedDraft(null);
+    setError(""); setMobileOpen(false); setActiveId(id); setConversationId(id); setAnswer(null); setDraft(""); setDraftId(null); setApproved(false); setApproving(false); setRejected(false); setRejecting(false); setSavedDraft(null); setHistory(null); setRestoredFromVersion(null);
     const data = await apiFetch(`/api/conversations/${id}/messages`).then((response) => readJson<Message[]>(response));
     setMessages(data.length ? data : [initialMessage]);
   }
 
   function newChat() {
-    setActiveId(null); setConversationId(null); setMessages([]); setAnswer(null); setDraft(""); setDraftId(null); setApproved(false); setApproving(false); setSavedDraft(null); setError(""); setInput(""); setMobileOpen(false);
+    setActiveId(null); setConversationId(null); setMessages([]); setAnswer(null); setDraft(""); setDraftId(null); setApproved(false); setApproving(false); setRejected(false); setRejecting(false); setSavedDraft(null); setHistory(null); setRestoredFromVersion(null); setError(""); setInput(""); setMobileOpen(false);
   }
 
   async function deleteConversation(event: React.MouseEvent, id: string) {
@@ -124,7 +129,7 @@ export default function AssistantPage() {
   async function sendMessage() {
     const content = input.trim();
     if (!content || loading) return;
-    setLoading(true); setError(""); setInput(""); setApproved(false);
+    setLoading(true); setError(""); setInput(""); setApproved(false); setRejected(false);
     // One key per logical send: a 401-token retry reuses it so the server
     // replays instead of duplicating the user turn.
     const idempotencyKey = typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `send-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -143,7 +148,7 @@ export default function AssistantPage() {
         result = await apiFetch(`/api/conversations/${id}/messages`, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey }, body: JSON.stringify({ content }) }).then((response) => readJson<AssistantResponse>(response));
       }
       if (result.error) throw new Error(result.error);
-      setAnswer(result); setDraft(result.draft_reply ?? ""); setDraftId(null); setSavedDraft(null); setMessages((items) => [...items, { id: result.message_id, role: "assistant", content: result.answer, citations: result.citations ?? [], created_at: result.created_at }]);
+      setAnswer(result); setDraft(result.draft_reply ?? ""); setDraftId(null); setSavedDraft(null); setHistory(null); setRestoredFromVersion(null); setMessages((items) => [...items, { id: result.message_id, role: "assistant", content: result.answer, citations: result.citations ?? [], created_at: result.created_at }]);
       setConversations((items) => items.map((item) => item.id === id ? { ...item, title: item.title || content.slice(0, 80), updated_at: new Date().toISOString() } : item));
     } catch (e) { setError(e instanceof Error ? e.message : "Unexpected error"); }
     finally { setLoading(false); }
@@ -153,13 +158,13 @@ export default function AssistantPage() {
     const content = draft;
     if (!conversationId || !content.trim() || approved) return null;
     try {
-      const result = await apiFetch(draftId ? `/api/drafts/${draftId}` : `/api/conversations/${conversationId}/drafts`, { method: draftId ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content }) }).then((response) => readJson<{ id: string }>(response));
-      setDraft(content); setDraftId(result.id); setSavedDraft(content); return result;
+      const result = await apiFetch(draftId ? `/api/drafts/${draftId}` : `/api/conversations/${conversationId}/drafts`, { method: draftId ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content, restored_from_version: restoredFromVersion }) }).then((response) => readJson<{ id: string }>(response));
+      setDraft(content); setDraftId(result.id); setSavedDraft(content); setHistory(null); setRestoredFromVersion(null); return result;
     } catch (e) { setError(e instanceof Error ? e.message : "Could not save draft"); return null; }
   }
 
   async function approve() {
-    if (approving || approved) return;
+    if (approving || approved || rejected) return;
     setApproving(true);
     try {
       const saved = await saveDraft();
@@ -170,7 +175,34 @@ export default function AssistantPage() {
     finally { setApproving(false); }
   }
 
+  async function reject() {
+    if (rejecting || approved || rejected) return;
+    // window.prompt, not a modal component — reason is optional feedback,
+    // not a form worth its own UI state. Skip if adding structured reason
+    // categories later.
+    const reason = window.prompt("Kenapa draft ini ditolak? (opsional)")?.trim() || undefined;
+    setRejecting(true);
+    try {
+      const saved = await saveDraft();
+      if (!saved) return;
+      await apiFetch(`/api/drafts/${saved.id}/reject`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason }) }).then((response) => readJson<{ id: string }>(response));
+      setRejected(true);
+    } catch (e) { setError(e instanceof Error ? e.message : "Could not reject draft"); }
+    finally { setRejecting(false); }
+  }
+
   async function copyDraft() { await navigator.clipboard?.writeText(draft); setCopied(true); setTimeout(() => setCopied(false), 1600); }
+
+  async function toggleHistory() {
+    if (history) { setHistory(null); return; }
+    if (!draftId) return;
+    try {
+      const data = await apiFetch(`/api/drafts/${draftId}/history`).then((response) => readJson<DraftVersion[]>(response));
+      setHistory(data ?? []);
+    } catch (e) { setError(e instanceof Error ? e.message : "Could not load history"); }
+  }
+
+  function restoreVersion(content: string, version: number) { setDraft(content); setSavedDraft(null); setHistory(null); setRestoredFromVersion(version); }
 
   async function logout() {
     try { await supabase.auth.signOut(); } finally { router.push("/login"); }
@@ -197,7 +229,7 @@ export default function AssistantPage() {
         {answer?.missing_context?.length ? <div className="ml-[42px] max-w-[calc(88%-42px)] rounded-lg border border-amber-200 bg-amber-50 px-3.5 py-3 text-[13px] text-amber-800"><b className="mb-0.5 block text-amber-900">Butuh informasi tambahan</b>{answer.missing_context.join(" ")}</div> : null}
         {loading && <div className="flex gap-3"><div className="grid h-[30px] w-[30px] place-items-center rounded-lg bg-primary text-white">✦</div><div className="flex items-center gap-1 rounded-[14px] border bg-white px-4 py-3"><i className="h-1.5 w-1.5 animate-pulse rounded-full bg-muted-foreground" /><i className="h-1.5 w-1.5 animate-pulse rounded-full bg-muted-foreground [animation-delay:.2s]" /><i className="h-1.5 w-1.5 animate-pulse rounded-full bg-muted-foreground [animation-delay:.4s]" /></div></div>}
         {error && <Alert className="border-red-200 bg-red-50"><AlertTitle>Request failed</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
-        {draft && answer && answer.intent !== "Greeting" && <div className="ml-[42px] max-w-[calc(88%-42px)] break-words rounded-xl border border-primary/20 bg-primary/5 p-4"><div className="mb-2 flex items-center justify-between gap-3"><p className="text-xs font-bold uppercase tracking-wider text-primary">Suggested reply</p><Button variant="ghost" size="sm" onClick={() => void copyDraft()}>{copied ? <Check className="h-4 w-4 text-emerald-600" /> : <Clipboard className="h-4 w-4" />}{copied ? "Copied" : "Copy"}</Button></div><Textarea value={draft} disabled={approved || approving} onChange={(event) => { setDraft(event.target.value); setSavedDraft(null); }} className="min-h-24 resize-y bg-white" /><div className="mt-3 flex gap-2"><Button variant="outline" className="flex-1" disabled={approved || approving} onClick={() => void saveDraft()}>{approved ? "Draft approved" : savedDraft === draft ? "Draft tersimpan" : "Save draft"}</Button><Button className="flex-1" disabled={approved || approving} onClick={() => void approve()}>{approved ? "Approved" : approving ? "Approving..." : "Approve draft"}</Button></div></div>}
+        {draft && answer && answer.intent !== "Greeting" && <div className="ml-[42px] max-w-[calc(88%-42px)] break-words rounded-xl border border-primary/20 bg-primary/5 p-4"><div className="mb-2 flex items-center justify-between gap-3"><p className="text-xs font-bold uppercase tracking-wider text-primary">Suggested reply</p><div className="flex items-center gap-1">{draftId && <Button variant="ghost" size="sm" onClick={() => void toggleHistory()}><History className="h-4 w-4" />{history ? "Hide history" : "History"}</Button>}<Button variant="ghost" size="sm" onClick={() => void copyDraft()}>{copied ? <Check className="h-4 w-4 text-emerald-600" /> : <Clipboard className="h-4 w-4" />}{copied ? "Copied" : "Copy"}</Button></div></div>{history && <div className="mb-3 max-h-40 space-y-1 overflow-y-auto rounded-lg border border-primary/10 bg-white p-2">{history.length === 0 ? <p className="p-1 text-xs text-muted-foreground">Belum ada versi sebelumnya.</p> : history.map((v) => <button key={v.id} type="button" onClick={() => restoreVersion(v.content, v.version)} className="block w-full rounded-md p-2 text-left text-xs hover:bg-muted"><span className="font-semibold">v{v.version}</span> · <span className="text-muted-foreground">{new Date(v.created_at).toLocaleString()}</span><p className="mt-0.5 line-clamp-2 text-foreground/80">{v.content}</p></button>)}</div>}<Textarea value={draft} disabled={approved || approving || rejected || rejecting} onChange={(event) => { setDraft(event.target.value); setSavedDraft(null); }} className="min-h-24 resize-y bg-white" /><div className="mt-3 flex gap-2"><Button variant="outline" className="flex-1" disabled={approved || approving || rejected || rejecting} onClick={() => void saveDraft()}>{approved ? "Draft approved" : rejected ? "Draft rejected" : savedDraft === draft ? "Draft tersimpan" : "Save draft"}</Button><Button variant="outline" className="flex-1 text-destructive hover:text-destructive" disabled={approved || approving || rejected || rejecting} onClick={() => void reject()}>{rejected ? "Rejected" : rejecting ? "Rejecting..." : "Reject draft"}</Button><Button className="flex-1" disabled={approved || approving || rejected || rejecting} onClick={() => void approve()}>{approved ? "Approved" : approving ? "Approving..." : "Approve draft"}</Button></div></div>}
         <div ref={bottomRef} />
       </div></div>
       <div className="shrink-0 border-t bg-white px-[18px] pb-5 pt-4 lg:px-8 lg:pb-[26px]"><div className="mx-auto flex max-w-[760px] flex-col gap-4"><div><p className="mb-2 text-[10px] font-bold uppercase tracking-[.16em] text-slate-400">Coba tanyakan</p><div className="flex gap-2.5 overflow-x-auto pb-1">{suggestions.map((suggestion) => <button key={suggestion} onClick={() => setInput(suggestion)} className="whitespace-nowrap rounded-full border bg-white px-4 py-2 text-xs text-muted-foreground hover:border-primary/30 hover:bg-primary/5 hover:text-primary">{suggestion}</button>)}</div></div><div className="flex items-end gap-3 rounded-2xl border bg-white px-5 py-3.5 focus-within:border-primary focus-within:ring-4 focus-within:ring-primary/10"><Textarea value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={handleKeyDown} rows={1} placeholder="Jelaskan issue customer..." className="max-h-36 min-h-6 resize-none border-0 p-2 leading-6 shadow-none focus-visible:ring-0" /><Button size="icon" aria-label="Send message" disabled={!input.trim() || loading} onClick={() => void sendMessage()} className="h-10 w-10 shrink-0 rounded-xl"><Send className="h-4 w-4" /></Button></div><p className="m-0 text-center text-[11px] leading-5 text-muted-foreground">CSCoPilot menjawab berdasarkan knowledge yang tersedia. Selalu periksa source sebelum digunakan kepada client.</p></div></div>

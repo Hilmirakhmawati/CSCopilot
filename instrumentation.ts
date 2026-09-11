@@ -39,7 +39,16 @@ async function registerNode() {
     import("./lib/notion-sync")
       .then(({ syncNotionKnowledge }) => syncNotionKnowledge({ pageId: process.env.NOTION_ROOT_PAGE_ID!.trim(), actorId: null, actionPrefix: "sync_scheduled" }))
       .then(({ synced }) => console.log(`Scheduled Notion sync completed: ${synced} rows`))
-      .catch((error) => console.error("Scheduled Notion sync failed", error))
+      .catch(async (error) => {
+        console.error("Scheduled Notion sync failed", error);
+        // console.error alone is invisible unless someone is tailing server
+        // logs — write to audit_events too, so a silent multi-day failure
+        // shows up on the admin audit page like any other event.
+        try {
+          const { getSupabaseAdmin } = await import("./lib/db");
+          await getSupabaseAdmin().from("audit_events").insert({ actor_id: null, entity_type: "knowledge_document", entity_id: null, action: "sync_failed", metadata: { error: error instanceof Error ? error.message : String(error) } });
+        } catch (auditError) { console.error("Failed to log sync failure to audit_events", auditError); }
+      })
       .finally(() => { syncRunning = false; });
   }, intervalMinutes * 60_000);
   timer.unref?.();

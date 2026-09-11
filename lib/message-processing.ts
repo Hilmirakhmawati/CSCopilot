@@ -150,6 +150,12 @@ async function processConversationMessageUnlocked(
   try {
     const greeting = isGreetingOnly(issue);
     const documents = greeting ? [] : await retrieveKnowledge(issue, history);
+    if (!greeting && documents.length === 0) {
+      // Reused audit_events rather than a new table — same shape (actor,
+      // metadata) fits, and it already has an admin view to build on.
+      const zeroResult = await db.from("audit_events").insert({ actor_id: userId, entity_type: "knowledge_query", entity_id: null, action: "zero_result", metadata: { query: issue, conversation_id: conversationId } });
+      if (zeroResult.error) console.error("Failed to log zero-result query", zeroResult.error);
+    }
     const answer = sanitizeAnswer(greeting
       ? greetingAnswer(issue, history)
       : await generateGroundedAnswer(issue, documents, history));
