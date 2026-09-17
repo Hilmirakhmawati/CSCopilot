@@ -27,9 +27,17 @@ async function registerNode() {
   }
 
   // Opt-in scheduled Notion sync: 0/off by default; minimum 5 minutes.
+  // ponytail: process-local only — safe for a single instance. Once a
+  // deployment target is chosen, prefer POST /api/cron/notion-sync (an
+  // external scheduler) and leave this env var unset, so both schedulers
+  // never run against the same database at once.
   const intervalMinutes = Number(process.env.CSCOPILOT_SYNC_INTERVAL_MINUTES);
   if (!intervalMinutes || intervalMinutes < 5) {
     if (intervalMinutes) console.warn("CSCOPILOT_SYNC_INTERVAL_MINUTES below 5 — scheduled Notion sync disabled.");
+    return;
+  }
+  if (process.env.CRON_SECRET?.trim()) {
+    console.warn("Both CSCOPILOT_SYNC_INTERVAL_MINUTES and CRON_SECRET are set — skipping the in-process timer to avoid duplicate scheduled syncs. Use the external scheduler (POST /api/cron/notion-sync) instead.");
     return;
   }
   let syncRunning = false;

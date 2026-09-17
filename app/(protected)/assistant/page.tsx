@@ -29,10 +29,14 @@ function clearTokenCache() {
 
 supabase.auth.onAuthStateChange(clearTokenCache);
 
-async function accessToken() {
-  if (cachedToken && Date.now() < tokenExpiresAt) return cachedToken;
+async function accessToken(forceRefresh = false) {
+  if (!forceRefresh && cachedToken && Date.now() < tokenExpiresAt) return cachedToken;
   if (!tokenRequest) {
-    tokenRequest = supabase.auth.getSession().then(({ data }) => {
+    // A 401 retry forces refreshSession() (asks Supabase for a new token)
+    // instead of getSession() (which would just hand back the same
+    // locally-cached, already-expired token and retry for nothing).
+    const request = forceRefresh ? supabase.auth.refreshSession() : supabase.auth.getSession();
+    tokenRequest = request.then(({ data }) => {
       cachedToken = data.session?.access_token;
       tokenExpiresAt = cachedToken ? Date.now() + 60_000 : 0;
       return cachedToken ?? null;
@@ -50,8 +54,8 @@ async function apiFetch(input: RequestInfo | URL, init?: RequestInit, retried = 
   if (token) headers.set("Authorization", `Bearer ${token}`);
   const response = await fetch(input, { ...init, headers });
   if (response.status === 401 && !retried) {
-    cachedToken = undefined;
-    tokenExpiresAt = 0;
+    clearTokenCache();
+    await accessToken(true);
     return apiFetch(input, init, true);
   }
   return response;

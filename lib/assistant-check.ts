@@ -1,6 +1,7 @@
 import assert from "assert/strict";
 import { mapCitations, extractFirstJsonObject } from "./anthropic";
-import { POINT_ARTICLE_TITLE_MATCHES, pointArticleTitle, isPointTopic } from "./retrieval";
+import { POINT_ARTICLE_TITLE_MATCHES, continuationSignal, pointArticleTitle, isPointTopic } from "./retrieval";
+import { activeContextForPrompt, trimHistoryToBudget, updateActiveContext } from "./context";
 import type { Citation, KnowledgeDocument } from "./assistant-types";
 
 const uuidPattern = "[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
@@ -13,6 +14,14 @@ export function validateCitations(citations: Citation[], documentIds: Set<string
 
 export function hasCustomerFacingSourceLeak(value: string) {
   return sourceMarkerPattern.test(value) || uuidRegex.test(value);
+}
+
+// Code-level guarantee for the Clarification Flow: if the model (or a
+// fallback path) reports missing_context, don't trust it to also have left
+// draft_reply empty — enforce it here so a Suggested Reply can never appear
+// alongside an unanswered "what's still missing" state.
+export function enforceMissingContextInvariant<T extends { missing_context: string[]; draft_reply: string }>(answer: T): T {
+  return answer.missing_context.length > 0 ? { ...answer, draft_reply: "" } : answer;
 }
 
 if (process.argv[1]?.endsWith("assistant-check.ts")) {
@@ -38,6 +47,27 @@ if (process.argv[1]?.endsWith("assistant-check.ts")) {
   assert.equal(isPointTopic("Poin saya tiba-tiba jadi nol"), true);
   assert.equal(isPointTopic("Bagaimana cara reset password customer?"), false);
   assert.equal(isPointTopic("Bagaimana proses refund order?"), false);
+
+  // Regression: an explicit new topic must not inherit the previous point
+  // topic just because it is short. Only genuine follow-ups ("masih sama")
+  // should be treated as continuations that borrow prior context.
+  assert.equal(continuationSignal("Pembayaran saya gagal"), false);
+  assert.equal(continuationSignal("Masih sama"), true);
+  assert.equal(continuationSignal("itu"), true);
+  assert.equal(continuationSignal("Cari SOP refund"), false);
+  const context = updateActiveContext("Poin saya jadi 0", {}, false, "2026-01-01T00:00:00Z");
+  assert.match(activeContextForPrompt(context), /Poin saya jadi 0/);
+  assert.equal(updateActiveContext("Pembayaran saya gagal", context, false).topic.value, "Pembayaran saya gagal");
+  assert.equal(trimHistoryToBudget([{ content: "a".repeat(1000) }, { content: "latest" }], 2).length, 1);
+
+  assert.deepEqual(
+    enforceMissingContextInvariant({ missing_context: ["nomor pesanan"], draft_reply: "Terima kasih..." }),
+    { missing_context: ["nomor pesanan"], draft_reply: "" },
+  );
+  assert.deepEqual(
+    enforceMissingContextInvariant({ missing_context: [], draft_reply: "Terima kasih..." }),
+    { missing_context: [], draft_reply: "Terima kasih..." },
+  );
 
   console.log("assistant-check passed");
 }

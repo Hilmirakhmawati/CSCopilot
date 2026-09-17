@@ -17,6 +17,7 @@ const DATABASE_TITLE = "Maintenance Task Testing";
 // empty/failed Notion read; delete stale rows only after a successful,
 // non-empty read).
 export async function syncNotionKnowledge({ pageId, actorId, actionPrefix }: { pageId: string; actorId: string | null; actionPrefix: string }) {
+  const startedAt = Date.now();
   const databaseId = await findChildDatabaseId(pageId, DATABASE_TITLE);
   if (!databaseId) throw new Error(`Database "${DATABASE_TITLE}" not found under the root page`);
   const rows = await readChatbotAllowedDatabaseRows(databaseId);
@@ -39,7 +40,7 @@ export async function syncNotionKnowledge({ pageId, actorId, actionPrefix }: { p
     const stale = await db.from("knowledge_documents").delete().not("notion_page_id", "in", `(${notionIds.join(",")})`);
     if (stale.error) throw stale.error;
   }
-  const audit = await db.from("audit_events").insert({ actor_id: actorId, entity_type: "knowledge_document", entity_id: null, action: `${actionPrefix}_${results.length}_rows` });
+  const audit = await db.from("audit_events").insert({ actor_id: actorId, entity_type: "knowledge_document", entity_id: null, action: `${actionPrefix}_${results.length}_rows`, metadata: { duration_ms: Date.now() - startedAt, rows: results.length, trigger: actionPrefix.includes("scheduled") ? "scheduled" : "manual" } });
   if (audit.error) throw audit.error;
   return { synced: results.length, results };
 }

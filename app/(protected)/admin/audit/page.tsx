@@ -18,6 +18,18 @@ type AuditRow = {
   profiles: { email: string } | null;
 };
 
+function metricSummary(metadata: Record<string, unknown>) {
+  const parts: string[] = [];
+  if (typeof metadata.latency_ms === "number") parts.push(`${metadata.latency_ms} ms`);
+  if (typeof metadata.duration_ms === "number") parts.push(`sync ${metadata.duration_ms} ms`);
+  if (typeof metadata.knowledge_count === "number") parts.push(`${metadata.knowledge_count} knowledge`);
+  if (typeof metadata.citation_count === "number") parts.push(`${metadata.citation_count} source`);
+  if (metadata.clarification === true) parts.push("clarification");
+  if (metadata.source_found === false) parts.push("no source");
+  if (typeof metadata.trigger === "string") parts.push(String(metadata.trigger));
+  return parts.join(" · ");
+}
+
 export default function AuditPage() {
   const [rows, setRows] = useState<AuditRow[]>([]);
   const [error, setError] = useState("");
@@ -72,6 +84,7 @@ export default function AuditPage() {
                     {typeof row.metadata?.query === "string" && (
                       <p className="truncate text-sm italic text-muted-foreground">&quot;{row.metadata.query}&quot;</p>
                     )}
+                    {metricSummary(row.metadata) && <p className="text-xs text-muted-foreground">{metricSummary(row.metadata)}</p>}
                   </div>
                   <div className="flex items-center gap-2">
                     <Badge variant="outline">{new Date(row.created_at).toLocaleString()}</Badge>

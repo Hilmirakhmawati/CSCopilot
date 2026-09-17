@@ -20,6 +20,11 @@ async function expectUnauthenticated(path: string, init?: RequestInit) {
   assert.equal(body.error, "Authentication required", `${path} leaked non-public error: ${JSON.stringify(body)}`);
 }
 
+async function expectRejectedCron(headers?: Record<string, string>) {
+  const res = await fetch(`${base}/api/cron/notion-sync`, { method: "POST", headers });
+  assert.notEqual(res.status, 200, "cron endpoint should reject a missing/wrong secret");
+}
+
 async function main() {
   await expectUnauthenticated("/api/conversations");
   await expectUnauthenticated("/api/conversations", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
@@ -29,7 +34,16 @@ async function main() {
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ content: "test" }),
   });
-  console.log("security-check passed (401 boundary). Remember to manually verify the 403 non-admin case.");
+
+  await expectRejectedCron();
+  await expectRejectedCron({ "x-cron-secret": "wrong-secret" });
+
+  const health = await fetch(`${base}/api/health`);
+  const healthBody = await health.json().catch(() => ({}));
+  assert.ok([200, 503].includes(health.status), `/api/health should return 200 or 503, got ${health.status}`);
+  assert.equal(JSON.stringify(healthBody).match(/sk-|eyJ|service_role/i), null, "/api/health leaked what looks like a secret");
+
+  console.log("security-check passed (401/cron/health boundary). Remember to manually verify the 403 non-admin case.");
 }
 
 main().catch((error) => {

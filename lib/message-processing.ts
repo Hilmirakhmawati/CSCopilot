@@ -1,7 +1,8 @@
 import { generateGroundedAnswer } from "./anthropic";
 import type { GroundedAnswer } from "./assistant-types";
 import { getSupabaseAdmin } from "./db";
-import { greetingAnswer, isGreetingOnly, retrieveKnowledge } from "./retrieval";
+import { greetingAnswer, isGreetingOnly, retrieveKnowledge, continuationSignal } from "./retrieval";
+import { activeContextForPrompt, estimateTokens, supersedeTopic, trimHistoryToBudget, updateActiveContext, type ActiveContext } from "./context";
 import { hasCustomerFacingSourceLeak, validateCitations } from "./assistant-check";
 
 // Last-resort backstop: if the model still echoes a source marker or UUID
@@ -96,8 +97,18 @@ async function processConversationMessageUnlocked(
   issue: string,
   idempotencyKey?: string,
 ): Promise<MessageResult> {
-  const owner = await db.from("conversations").select("id").eq("id", conversationId).eq("created_by", userId).single();
+  const startedAt = Date.now();
+  // Requires migration 005 (context_summary/active_context columns).
+  const owner = await db
+    .from("conversations")
+    .select("id,context_summary,active_context")
+    .eq("id", conversationId)
+    .eq("created_by", userId)
+    .single();
   if (owner.error) throw new Error("Conversation not found");
+  const storedContext = (owner.data.active_context ?? {}) as ActiveContext;
+  const contextSummary: string = owner.data.context_summary ?? "";
+  const continuation = continuationSignal(issue);
 
   const key = idempotencyKey && (await idempotencyReady(db)) ? idempotencyKey : undefined;
   if (key) {
@@ -112,19 +123,39 @@ async function processConversationMessageUnlocked(
     if (existing.data) return replayResult(existing.data as StoredMessage);
   }
 
+  // Use the newest turns as context. The secondary order keeps pagination
+  // deterministic when two messages share the same timestamp.
   const prior = await db
     .from("messages")
-    .select("role,content")
+    .select("id,role,content")
     .eq("conversation_id", conversationId)
     .neq("role", "system")
-    .order("created_at", { ascending: true })
-    .limit(20);
+    .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
+    .limit(10);
   if (prior.error) throw prior.error;
 
-  const history = (prior.data ?? []).slice(-10).map((message) => ({
+  // The model expects conversation messages oldest-first; the DB query is
+  // newest-first so the limit selects the correct window efficiently.
+  const history = (prior.data ?? []).reverse().map((message) => ({
     role: message.role as "user" | "assistant",
     content: message.content as string,
   }));
+  // An explicit new topic supersedes the old one rather than blending with
+  // it; the superseded topic leaves one line in the rolling summary so long
+  // conversations keep a trail after it drops out of active context.
+  const { context: baseContext, summary: nextSummary } = continuation
+    ? { context: storedContext, summary: contextSummary }
+    : supersedeTopic(storedContext, contextSummary);
+  const activeContext = updateActiveContext(issue, baseContext, continuation);
+  const activeContextText = activeContextForPrompt(activeContext);
+  const contextBudget = 6_000;
+  const contextText = [
+    activeContextText && `ACTIVE CONTEXT:\n${activeContextText}`,
+    nextSummary && `PREVIOUS CONTEXT SUMMARY:\n${nextSummary}`,
+  ].filter(Boolean).join("\n\n");
+  const historyBudget = Math.max(0, contextBudget - estimateTokens(contextText) - estimateTokens(issue));
+  const boundedHistory = trimHistoryToBudget(history, historyBudget);
   const input = await db
     .from("messages")
     .insert(key
@@ -149,7 +180,7 @@ async function processConversationMessageUnlocked(
 
   try {
     const greeting = isGreetingOnly(issue);
-    const documents = greeting ? [] : await retrieveKnowledge(issue, history);
+    const documents = greeting ? [] : await retrieveKnowledge(issue, boundedHistory);
     if (!greeting && documents.length === 0) {
       // Reused audit_events rather than a new table — same shape (actor,
       // metadata) fits, and it already has an admin view to build on.
@@ -157,12 +188,29 @@ async function processConversationMessageUnlocked(
       if (zeroResult.error) console.error("Failed to log zero-result query", zeroResult.error);
     }
     const answer = sanitizeAnswer(greeting
-      ? greetingAnswer(issue, history)
-      : await generateGroundedAnswer(issue, documents, history));
+      ? greetingAnswer(issue, boundedHistory)
+      : await generateGroundedAnswer(issue, documents, boundedHistory, contextText));
     answer.citations = validateCitations(
       answer.citations ?? [],
       new Set(documents.map((document) => document.id)),
     );
+
+    void db.from("audit_events").insert({
+      actor_id: userId,
+      entity_type: "system_metric",
+      entity_id: null,
+      action: "knowledge_query",
+      metadata: {
+        latency_ms: Date.now() - startedAt,
+        knowledge_count: documents.length,
+        citation_count: answer.citations.length,
+        confidence: answer.confidence,
+        clarification: answer.missing_context.length > 0,
+        source_found: documents.length > 0,
+      },
+    }).then(({ error }) => {
+      if (error) console.error("Failed to record query telemetry", error);
+    });
 
     const output = await db
       .from("messages")
@@ -179,7 +227,7 @@ async function processConversationMessageUnlocked(
 
     const updated = await db
       .from("conversations")
-      .update({ updated_at: new Date().toISOString() })
+      .update({ active_context: activeContext, context_summary: nextSummary, context_updated_at: new Date().toISOString(), updated_at: new Date().toISOString() })
       .eq("id", conversationId);
     if (updated.error) throw updated.error;
 

@@ -2,6 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import type { GroundedAnswer, KnowledgeDocument } from "./assistant-types";
 import { continuationSignal, greetingAnswer, isClosingMessage, isGreetingOnly } from "./retrieval";
 import { withRetry } from "./retry";
+import { enforceMissingContextInvariant } from "./assistant-check";
 
 const DEFAULT_MODEL = "claude-sonnet-5";
 
@@ -125,8 +126,8 @@ function fallback(issue: string, documents: KnowledgeDocument[], history: Array<
       summary: "No matching company knowledge was found.",
       missing_context: ["Relevant company documentation is unavailable. Confirm the account, error message, and steps already tried."],
       recommended_action: "Collect the missing details and verify the case manually before replying.",
-      answer: "Belum ada knowledge perusahaan yang cukup relevan untuk menjawab issue ini.",
-      draft_reply: "Terima kasih sudah menghubungi kami. Kami sedang meninjau kendala ini. Mohon kirimkan pesan error yang muncul, akun yang terdampak, dan langkah yang sudah dicoba.",
+      answer: "Belum ada knowledge perusahaan yang cukup relevan untuk menjawab issue ini. Bisa tolong kirimkan pesan error yang muncul, akun yang terdampak, dan langkah yang sudah dicoba?",
+      draft_reply: "",
       citations: [],
       confidence: "low",
     };
@@ -163,10 +164,11 @@ Treat source metadata as internal evidence only. Never copy SOURCE labels, IDs, 
 Only put something in missing_context if the customer's message truly lacks it and the agent cannot proceed without it. Never list information already provided (order number, account, error message, etc.) or "nice to have" details. Routine manual verification steps that the agent always performs as part of the SOP (checking a database, confirming a balance) belong in recommended_action, not missing_context — missing_context is only for what the customer still needs to supply.
 Never invent policies, refunds, timelines, credentials, or troubleshooting steps.
 Every supported company-specific claim needs a citation using the REFERENCE number it came from.
-Produce an editable customer-facing draft, never send it, and never claim it was sent.
+Clarification Flow: before answering, check whether the issue plus the supplied history and sources are actually enough to give a grounded, specific reply. If not, do not guess — set missing_context to what is still needed, put ONE short, specific question in answer (e.g. ask for the exact error message or order number, not "can you give more details?"), and leave draft_reply empty; set confidence to "low". Never ask again for something the customer or agent already stated earlier in the history. If the message is ambiguous, indirect ("itu", "yang tadi", "masih sama"), or sarcastic, first try to resolve it from the conversation history; only ask a clarifying question if it genuinely cannot be resolved that way. If the conversation is discussing more than one distinct issue, identify which one the current message is about; if that itself is unclear, ask which issue it refers to instead of mixing information between them.
+Produce an editable customer-facing draft, never send it, and never claim it was sent. When missing_context is non-empty, draft_reply must be "".
 Return JSON matching the requested schema.`;
 
-export async function generateGroundedAnswer(issue: string, documents: KnowledgeDocument[], history: Array<{ role: "user" | "assistant"; content: string }> = []): Promise<GroundedAnswer> {
+export async function generateGroundedAnswer(issue: string, documents: KnowledgeDocument[], history: Array<{ role: "user" | "assistant"; content: string }> = [], contextSummary = ""): Promise<GroundedAnswer> {
   if (isGreetingOnly(issue)) return greetingAnswer(issue, history);
   if (!configuredApiKey() || process.env.CSCOPILOT_NO_AI === "1") return fallback(issue, documents, history);
   const context = documents.map((doc, index) => `REFERENCE ${index + 1}\nCONTENT:\n${doc.content}`).join("\n\n");
@@ -179,7 +181,7 @@ export async function generateGroundedAnswer(issue: string, documents: Knowledge
       system,
       messages: [
         ...history,
-        { role: "user", content: `ISSUE:\n${issue}\n\nKNOWLEDGE CONTEXT:\n${context || "No reliable source found."}\n\nReturn only JSON with keys: intent, summary, missing_context, recommended_action, answer, draft_reply, citations (reference_index,quote), confidence (low|medium|high). Each reference_index must be a 1-based REFERENCE number from the context. Use [] when no source supports the answer. Do not include markdown fences.` },
+        { role: "user", content: `ACTIVE CONTEXT (unverified unless explicitly marked verified):\n${contextSummary || "None"}\n\nISSUE:\n${issue}\n\nKNOWLEDGE CONTEXT:\n${context || "No reliable source found."}\n\nReturn only JSON with keys: intent, summary, missing_context, recommended_action, answer, draft_reply, citations (reference_index,quote), confidence (low|medium|high). If missing_context is non-empty, answer must be the targeted clarifying question, draft_reply must be empty, and confidence must be low. Each reference_index must be a 1-based REFERENCE number from the context. Use [] when no source supports the answer. Do not include markdown fences.` },
       ],
     } as never));
   } catch (error) {
@@ -204,7 +206,7 @@ export async function generateGroundedAnswer(issue: string, documents: Knowledge
     console.warn("Claude returned an unexpected schema; using grounded fallback");
     return fallback(issue, documents, history);
   }
-  return { ...parsed, citations: mapCitations(parsed.citations, documents) };
+  return enforceMissingContextInvariant({ ...parsed, citations: mapCitations(parsed.citations, documents) });
 }
 
 export { fallback as generateNoAiAnswer };
