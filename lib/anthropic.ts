@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { GroundedAnswer, KnowledgeDocument } from "./assistant-types";
-import { continuationSignal, greetingAnswer, isClosingMessage, isGreetingOnly } from "./retrieval";
+import { continuationSignal, greetingAnswer, isClosingMessage, isGreetingOnly, pointAnswer } from "./retrieval";
 import { withRetry } from "./retry";
 import { enforceMissingContextInvariant } from "./assistant-check";
 
@@ -170,6 +170,8 @@ Return JSON matching the requested schema.`;
 
 export async function generateGroundedAnswer(issue: string, documents: KnowledgeDocument[], history: Array<{ role: "user" | "assistant"; content: string }> = [], contextSummary = ""): Promise<GroundedAnswer> {
   if (isGreetingOnly(issue)) return greetingAnswer(issue, history);
+  const deterministicPointAnswer = pointAnswer(issue, documents, history);
+  if (deterministicPointAnswer) return deterministicPointAnswer;
   if (!configuredApiKey() || process.env.CSCOPILOT_NO_AI === "1") return fallback(issue, documents, history);
   const context = documents.map((doc, index) => `REFERENCE ${index + 1}\nCONTENT:\n${doc.content}`).join("\n\n");
   let response;

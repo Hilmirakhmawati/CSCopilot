@@ -66,15 +66,28 @@ export async function readChatbotAllowedDatabaseRows(databaseId: string) {
       const visibility = selectOf(properties["Visibility"]);
       if (visibility !== "Chatbot Allowed") continue;
       const summary = richTextOf(properties["Customer Safe Summary"]);
+      // Customer Action is an internal CS instruction (e.g. "Minta nomor
+      // pesanan"), never text to send to a customer. Customer Reply is the
+      // approved customer-facing sentence; rows without it can still sync
+      // (for internal-only guidance) but the app must not invent a reply
+      // by reusing Customer Action — see pointAnswer() in retrieval.ts.
       const action = richTextOf(properties["Customer Action"]);
+      const reply = richTextOf(properties["Customer Reply"]);
+      const requiredContext = richTextOf(properties["Required Context"]);
       if (!summary || !action) continue;
       const titleProperty = Object.values(properties).find((p) => p.type === "title") as { title?: RichText[] } | undefined;
       const title = titleProperty?.title?.map((part) => part.plain_text ?? "").join("") || "Untitled";
+      const contentLines = [
+        `Customer Safe Summary: ${summary}`,
+        `Customer Action: ${action}`,
+        reply && `Customer Reply: ${reply}`,
+        requiredContext && `Required Context: ${requiredContext}`,
+      ].filter(Boolean);
       rows.push({
         notion_page_id: raw.id,
         title,
         url: "url" in raw ? (raw.url as string) : null,
-        content: `Customer Safe Summary: ${summary}\nCustomer Action: ${action}`,
+        content: contentLines.join("\n"),
         last_edited_time: "last_edited_time" in raw ? (raw.last_edited_time as string) : null,
       });
     }

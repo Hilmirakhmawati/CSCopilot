@@ -14,6 +14,12 @@ export type GroundedAnswer = {
   draft_reply: string;
   citations: Citation[];
   confidence: "low" | "medium" | "high";
+  // True when draft_reply is empty because the Notion article itself is
+  // unfinished (missing Customer Reply / Customer Safe Summary / Customer
+  // Action) — a knowledge-authoring gap, not something the customer needs
+  // to supply. Distinguishes that from missing_context, which is data CS
+  // still needs to collect from the customer. Optional/undefined = false.
+  knowledge_gap?: boolean;
 };
 
 export type KnowledgeDocument = {

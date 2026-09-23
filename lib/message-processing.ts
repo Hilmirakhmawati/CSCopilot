@@ -98,16 +98,37 @@ async function processConversationMessageUnlocked(
   idempotencyKey?: string,
 ): Promise<MessageResult> {
   const startedAt = Date.now();
-  // Requires migration 005 (context_summary/active_context columns).
-  const owner = await db
+  // Migration 005 adds the context columns. Keep the context feature optional
+  // until that migration has reached every environment.
+  const ownerWithContext = await db
     .from("conversations")
     .select("id,context_summary,active_context")
     .eq("id", conversationId)
     .eq("created_by", userId)
     .single();
-  if (owner.error) throw new Error("Conversation not found");
-  const storedContext = (owner.data.active_context ?? {}) as ActiveContext;
-  const contextSummary: string = owner.data.context_summary ?? "";
+  let contextColumnsAvailable = true;
+  let ownerData = ownerWithContext.data as { id: string; context_summary?: string | null; active_context?: unknown } | null;
+  if (ownerWithContext.error) {
+    // PostgREST uses PGRST116 when `.single()` finds no owned row. Missing
+    // columns are a deploy-order issue, not a missing conversation.
+    if (ownerWithContext.error.code === "PGRST116") throw new Error("Conversation not found");
+    if (!(["PGRST204", "42703"] as string[]).includes(ownerWithContext.error.code ?? "")) throw ownerWithContext.error;
+    contextColumnsAvailable = false;
+    const legacyOwner = await db
+      .from("conversations")
+      .select("id")
+      .eq("id", conversationId)
+      .eq("created_by", userId)
+      .single();
+    if (legacyOwner.error) {
+      if (legacyOwner.error.code === "PGRST116") throw new Error("Conversation not found");
+      throw legacyOwner.error;
+    }
+    ownerData = legacyOwner.data;
+  }
+  if (!ownerData) throw new Error("Conversation not found");
+  const storedContext = (ownerData.active_context ?? {}) as ActiveContext;
+  const contextSummary: string = ownerData.context_summary ?? "";
   const continuation = continuationSignal(issue);
 
   const key = idempotencyKey && (await idempotencyReady(db)) ? idempotencyKey : undefined;
@@ -227,7 +248,9 @@ async function processConversationMessageUnlocked(
 
     const updated = await db
       .from("conversations")
-      .update({ active_context: activeContext, context_summary: nextSummary, context_updated_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+      .update(contextColumnsAvailable
+        ? { active_context: activeContext, context_summary: nextSummary, context_updated_at: new Date().toISOString(), updated_at: new Date().toISOString() }
+        : { updated_at: new Date().toISOString() })
       .eq("id", conversationId);
     if (updated.error) throw updated.error;
 

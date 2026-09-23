@@ -1,6 +1,6 @@
 import assert from "assert/strict";
 import { mapCitations, extractFirstJsonObject } from "./anthropic";
-import { POINT_ARTICLE_TITLE_MATCHES, continuationSignal, pointArticleTitle, isPointTopic } from "./retrieval";
+import { POINT_ARTICLE_TITLE_MATCHES, continuationSignal, pointAnswer, pointArticleTitle, isPointTopic } from "./retrieval";
 import { activeContextForPrompt, trimHistoryToBudget, updateActiveContext } from "./context";
 import type { Citation, KnowledgeDocument } from "./assistant-types";
 
@@ -41,12 +41,101 @@ if (process.argv[1]?.endsWith("assistant-check.ts")) {
 
   assert.equal(pointArticleTitle("Saldo poin customer tampil 0 padahal sebelumnya ada"), POINT_ARTICLE_TITLE_MATCHES[0]);
   assert.equal(pointArticleTitle("Riwayat poin tidak sesuai dengan pesanan"), POINT_ARTICLE_TITLE_MATCHES[1]);
+  assert.equal(pointArticleTitle("Kenapa riwayat poin beda?"), POINT_ARTICLE_TITLE_MATCHES[1]);
+  assert.equal(pointArticleTitle("Kenapa riwayat poin tidak sesuai?"), POINT_ARTICLE_TITLE_MATCHES[1]);
   assert.equal(pointArticleTitle("Perhitungan penggunaan poin saya salah"), POINT_ARTICLE_TITLE_MATCHES[2]);
   assert.equal(pointArticleTitle("Riwayat poin pada pesanan umum tidak konsisten"), POINT_ARTICLE_TITLE_MATCHES[3]);
   assert.equal(pointArticleTitle("Ada selisih saldo poin, minta audit"), POINT_ARTICLE_TITLE_MATCHES[4]);
   assert.equal(isPointTopic("Poin saya tiba-tiba jadi nol"), true);
   assert.equal(isPointTopic("Bagaimana cara reset password customer?"), false);
   assert.equal(isPointTopic("Bagaimana proses refund order?"), false);
+
+  // Legacy row: no Customer Reply field yet. Must never surface Customer
+  // Action as a customer-facing draft — the app has to hold back and ask
+  // for the Notion row to be completed instead.
+  const legacyDocuments: KnowledgeDocument[] = [{
+    id: "point-1",
+    title: POINT_ARTICLE_TITLE_MATCHES[1],
+    url: "https://notion.so/point-1",
+    content: "Customer Safe Summary: Riwayat poin dapat berbeda dari riwayat pesanan.\nCustomer Action: Minta nomor pesanan terkait untuk verifikasi.",
+    category: "points",
+    synced_at: "",
+  }];
+  const legacyPoint = pointAnswer("Kenapa riwayat poin beda?", legacyDocuments);
+  assert.ok(legacyPoint);
+  assert.equal(legacyPoint?.draft_reply, "");
+  assert.equal(legacyPoint?.recommended_action, "Minta nomor pesanan terkait untuk verifikasi");
+  assert.equal(legacyPoint?.missing_context.length > 0, true);
+  assert.equal(legacyPoint?.citations.length, 1);
+  assert.equal(legacyPoint?.answer.includes("Kemungkinan penyebab"), false);
+  assert.equal(legacyPoint?.answer.includes("Minta nomor pesanan"), false);
+
+  const pointDocuments: KnowledgeDocument[] = [{
+    id: "point-1b",
+    title: POINT_ARTICLE_TITLE_MATCHES[1],
+    url: "https://notion.so/point-1b",
+    content:
+      "Customer Safe Summary: Riwayat poin dapat berbeda dari riwayat pesanan.\n" +
+      "Customer Action: Minta nomor pesanan terkait untuk verifikasi.\n" +
+      "Customer Reply: Terima kasih sudah menghubungi kami, mohon kirimkan nomor pesanan terkait agar kami bisa memeriksa riwayat poin",
+    category: "points",
+    synced_at: "",
+  }];
+  const point = pointAnswer("Kenapa riwayat poin beda?", pointDocuments);
+  assert.ok(point);
+  assert.equal(point?.draft_reply, "");
+  assert.deepEqual(point?.missing_context, ["Mohon minta nomor pesanan terkait sebelum kasus ini diverifikasi."]);
+  assert.equal(point?.citations.length, 1);
+  assert.equal(point?.answer.includes("Kemungkinan penyebab"), false);
+  // Customer Action (internal) must never leak into the customer-facing draft.
+  assert.equal(point?.recommended_action, "Minta nomor pesanan terkait untuk verifikasi");
+
+  const zeroBalanceDocuments: KnowledgeDocument[] = [{
+    id: "point-0",
+    title: POINT_ARTICLE_TITLE_MATCHES[0],
+    url: "https://notion.so/point-0",
+    content:
+      "Customer Safe Summary: Saldo poin dapat menampilkan 0 karena kendala sinkronisasi.\n" +
+      "Customer Action: Minta nomor pesanan terkait untuk verifikasi.\n" +
+      "Required Context: Nomor order\n" +
+      "Customer Reply: Terima kasih sudah menghubungi kami, mohon kirimkan nomor pesanan terkait agar tim kami bisa memeriksa saldo poin Anda",
+    category: "points",
+    synced_at: "",
+  }];
+  assert.equal(continuationSignal("123344555"), true);
+  assert.equal(continuationSignal("customer@example.com"), true);
+  const verifiedBareIdentifier = pointAnswer("123344555", zeroBalanceDocuments, [{ role: "user", content: "Kenapa saldo poin 0?" }]);
+  assert.equal(verifiedBareIdentifier?.missing_context.length, 0);
+  assert.notEqual(verifiedBareIdentifier?.draft_reply, "");
+  const verifiedPoint = pointAnswer("1223243144 ini adalah no pesanannya", zeroBalanceDocuments, [{ role: "user", content: "Kenapa saldo poin 0?" }]);
+  assert.equal(verifiedPoint?.missing_context.length, 0);
+  assert.notEqual(verifiedPoint?.draft_reply, "");
+  assert.equal(verifiedPoint?.draft_reply.includes("Minta nomor pesanan terkait untuk verifikasi"), false);
+  assert.equal(point?.answer.includes("akan disesuaikan"), false);
+
+  const calculationDocuments: KnowledgeDocument[] = [{
+    id: "point-calculation",
+    title: POINT_ARTICLE_TITLE_MATCHES[2],
+    url: "https://notion.so/point-calculation",
+    content:
+      "Customer Safe Summary: Perhitungan penggunaan poin perlu ditinjau ulang.\n" +
+      "Customer Action: Minta nomor pesanan terkait untuk meninjau ulang perhitungan poin. Jika perlu, minta screenshot melalui channel yang mendukung attachment.\n" +
+      "Required Context: Nomor pesanan\n" +
+      "Customer Reply: Mohon kirimkan nomor pesanan terkait agar kami dapat meninjau perhitungan poin Anda",
+    category: "points",
+    synced_at: "",
+  }];
+  const calculationWithoutContext = pointAnswer("Cara cek perhitungan poin?", calculationDocuments);
+  assert.deepEqual(calculationWithoutContext?.missing_context, [
+    "Mohon minta nomor pesanan terkait sebelum kasus ini diverifikasi.",
+  ]);
+  // Regression: mentioning "screenshot" in the chat must not be treated as a
+  // real attachment — the app has no attachment upload path yet.
+  const calculationScreenshotOnly = pointAnswer("ini screenshot perhitungannya, terlampir ya", calculationDocuments, [{ role: "user", content: "Cara cek perhitungan poin?" }]);
+  assert.equal(calculationScreenshotOnly?.missing_context.length, 1);
+  const calculationVerified = pointAnswer("1234567890 ini nomor pesanannya", calculationDocuments, [{ role: "user", content: "Cara cek perhitungan poin?" }]);
+  assert.equal(calculationVerified?.missing_context.length, 0);
+  assert.notEqual(calculationVerified?.draft_reply, "");
 
   // Regression: an explicit new topic must not inherit the previous point
   // topic just because it is short. Only genuine follow-ups ("masih sama")

@@ -1,8 +1,18 @@
 [
-  { "query": "Halo min", "isGreeting": false, "isClosing": false, "isContinuation": false, "isPointTopic": false },
+  { "query": "Halo min", "isGreeting": true, "isClosing": false, "isContinuation": false, "isPointTopic": false },
+  { "query": "hallo siang", "isGreeting": true, "isClosing": false, "isContinuation": false, "isPointTopic": false },
+  { "query": "Hiiii kak!!!", "isGreeting": true, "isClosing": false, "isContinuation": false, "isPointTopic": false },
+  { "query": "good evening everyone", "isGreeting": true, "isClosing": false, "isContinuation": false, "isPointTopic": false },
+  { "query": "hola admin", "isGreeting": true, "isClosing": false, "isContinuation": false, "isPointTopic": false },
+  { "query": "Halo, pembayaran gagal", "isGreeting": false, "isClosing": false, "isContinuation": false, "isPointTopic": false },
   { "query": "oke terima kasih", "isGreeting": false, "isClosing": true, "isContinuation": false, "isPointTopic": false },
   { "query": "Poin saya jadi 0 kenapa ya?", "isGreeting": false, "isClosing": false, "isContinuation": false, "isPointTopic": true, "pointArticle": "Customer Points Displayed as 0" },
   { "query": "Riwayat pesanan saya tidak cocok dengan riwayat poin", "isGreeting": false, "isClosing": false, "isContinuation": false, "isPointTopic": true, "pointArticle": "Point History Does Not Match Order History" },
+  { "query": "Kenapa riwayat poin beda?", "isGreeting": false, "isClosing": false, "isContinuation": false, "isPointTopic": true, "pointArticle": "Point History Does Not Match Order History" },
+  { "query": "Kenapa riwayat poin tidak sesuai?", "isGreeting": false, "isClosing": false, "isContinuation": false, "isPointTopic": true, "pointArticle": "Point History Does Not Match Order History" },
+  { "query": "Cara cek perhitungan poin?", "isGreeting": false, "isClosing": false, "isContinuation": false, "isPointTopic": true, "pointArticle": "Point Usage Calculation Appears Incorrect" },
+  { "query": "Riwayat poin pada pesanan umum tidak konsisten", "isGreeting": false, "isClosing": false, "isContinuation": false, "isPointTopic": true, "pointArticle": "Point History Inconsistency on General Orders" },
+  { "query": "Cara audit saldo poin?", "isGreeting": false, "isClosing": false, "isContinuation": false, "isPointTopic": true, "pointArticle": "Audit dan Perbaikan Saldo Point Customer" },
   { "query": "itu", "isGreeting": false, "isClosing": false, "isContinuation": true, "isPointTopic": false },
   { "query": "Bagaimana cara refund pesanan yang gagal bayar?", "isGreeting": false, "isClosing": false, "isContinuation": false, "isPointTopic": false }
 ]
