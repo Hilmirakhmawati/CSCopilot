@@ -158,6 +158,9 @@ function fallback(issue: string, documents: KnowledgeDocument[], history: Array<
 
 const system = `You are CSCoPilot, an internal Customer Support decision-support assistant.
 Handle greetings naturally and briefly. For greeting-only messages, reply in the user's language with one friendly greeting and one short question; do not explain capabilities or mention sources. For a greeting plus an issue, acknowledge it briefly, then answer the issue using the supplied sources. In an existing conversation, preserve context when the user greets again.
+The messages before the final one are prior conversation history, for context only. Always answer the CURRENT CLIENT MESSAGE in the final user turn — never answer an earlier question instead, even if it is easier to answer or still unresolved.
+When the conversation mentions more than one project, product, or system, first identify which one the CURRENT CLIENT MESSAGE concerns — from an explicit name in that message, or otherwise the nearest prior message that clearly set the current topic. Use and cite only sources and context belonging to that project; never combine facts, causes, or solutions from a different project into the same answer, even if both were discussed earlier in this conversation.
+If you cannot tell which project or prior issue the CURRENT CLIENT MESSAGE refers to (for example, two projects were just discussed and the message only says "this"/"ini"/"itu"), do not guess. Say so and ask a short clarifying question in draft_reply, and note the ambiguity in missing_context, instead of answering for one project.
 Respond in Indonesian for Indonesian input, English for English input, and mirror mixed language naturally.
 Notion sources are the only authority for company-specific claims. Use only supplied sources.
 Treat source metadata as internal evidence only. Never copy SOURCE labels, IDs, UUIDs, titles, URLs, scores, or metadata into answer or draft_reply. Put source IDs only in structured citations.
@@ -181,10 +184,33 @@ export async function generateGroundedAnswer(issue: string, documents: Knowledge
       max_tokens: 1800,
       thinking: { type: "adaptive" } as never,
       system,
-      messages: [
-        ...history,
-        { role: "user", content: `ACTIVE CONTEXT (unverified unless explicitly marked verified):\n${contextSummary || "None"}\n\nISSUE:\n${issue}\n\nKNOWLEDGE CONTEXT:\n${context || "No reliable source found."}\n\nReturn only JSON with keys: intent, summary, missing_context, recommended_action, answer, draft_reply, citations (reference_index,quote), confidence (low|medium|high). If missing_context is non-empty, answer must be the targeted clarifying question, draft_reply must be empty, and confidence must be low. Each reference_index must be a 1-based REFERENCE number from the context. Use [] when no source supports the answer. Do not include markdown fences.` },
-      ],
+messages: [
+  ...history,
+  {
+    role: "user",
+    content: `CURRENT CLIENT MESSAGE (answer this; the messages above are context only):
+${issue}
+
+ACTIVE CONTEXT (unverified unless explicitly marked verified):
+${contextSummary || "None"}
+
+KNOWLEDGE CONTEXT:
+${context || "No reliable source found."}
+
+Return only JSON with this shape:
+{
+  "answer": "customer-facing answer",
+  "draft_reply": "customer-facing suggested reply",
+  "citations": [{"reference_index": 0, "quote": "short quote"}],
+  "missing_context": "what is still needed, or empty string",
+  "confidence": "high | medium | low"
+}
+
+If missing_context is non-empty, answer must be the targeted clarifying question, draft_reply must be empty, and confidence must be low.
+Each reference_index must refer to a source in KNOWLEDGE CONTEXT.
+Do not invent facts not supported by the knowledge context or conversation.`
+  },
+],
     } as never));
   } catch (error) {
     if (isUnavailableAnthropicError(error)) return fallback(issue, documents, history);

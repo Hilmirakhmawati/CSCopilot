@@ -249,21 +249,9 @@ export function pointAnswer(
 }
 
 async function search(supabase: ReturnType<typeof getSupabaseAdmin>, query: string): Promise<KnowledgeDocument[]> {
-  const first = await supabase.rpc("search_knowledge_documents", { search_query: query, result_limit: 5 });
-  if (first.error) throw first.error;
-  if (first.data?.length) return first.data as KnowledgeDocument[];
-
-  const terms = [...new Set(query.toLowerCase().match(/[a-z0-9À-ɏ]+/g) ?? [])]
-    .filter((term) => term.length >= 3)
-    .slice(0, 3);
-  if (!terms.length) return [];
-  const results = await Promise.all(terms.map((term) => supabase.rpc("search_knowledge_documents", { search_query: term, result_limit: 5 })));
-  const documents = new Map<string, KnowledgeDocument>();
-  for (const result of results) {
-    if (result.error) throw result.error;
-    for (const document of (result.data ?? []) as KnowledgeDocument[]) documents.set(document.id, document);
-  }
-  return [...documents.values()].slice(0, 5);
+  const result = await supabase.rpc("search_knowledge_documents", { search_query: query, result_limit: 5 });
+  if (result.error) throw result.error;
+  return (result.data ?? []) as KnowledgeDocument[];
 }
 
 export async function retrieveKnowledge(query: string, history: Array<{ role: "user" | "assistant"; content: string }> = []): Promise<KnowledgeDocument[]> {
