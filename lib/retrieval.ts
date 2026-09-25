@@ -168,6 +168,16 @@ function requiredContext(action: string, explicit: string) {
   return null;
 }
 
+function requestsContext(reply: string) {
+  return /\b(mohon|silakan|kirimkan|kirim|berikan|cantumkan|masukkan)\b/i.test(reply);
+}
+
+function suppliedContextReply(reply: string, context: string) {
+  if (!requestsContext(reply)) return `${reply}.`;
+  const label = context.includes("akun") && !context.includes("pesanan") ? "informasi akun" : "nomor pesanan";
+  return `Terima kasih, ${label} sudah kami terima. Tim kami akan meninjau data terkait dan memverifikasi kasus ini.`;
+}
+
 export function pointAnswer(
   query: string,
   documents: KnowledgeDocument[],
@@ -247,7 +257,7 @@ export function pointAnswer(
     missing_context: missingContext,
     recommended_action: action,
     answer: `${summary}.`,
-    draft_reply: missingContext.length ? "" : `${reply}.`,
+    draft_reply: missingContext.length ? "" : `${suppliedContextReply(reply, context ?? "")}.`,
     citations,
     confidence: "high",
   };
