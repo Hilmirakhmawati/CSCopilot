@@ -172,10 +172,17 @@ function requestsContext(reply: string) {
   return /\b(mohon|silakan|kirimkan|kirim|berikan|cantumkan|masukkan)\b/i.test(reply);
 }
 
-function suppliedContextReply(reply: string, context: string) {
+function suppliedContextReply(reply: string, context: string, query: string) {
   if (!requestsContext(reply)) return `${reply}.`;
-  const label = context.includes("akun") && !context.includes("pesanan") ? "informasi akun" : "nomor pesanan";
-  return `Terima kasih, ${label} sudah kami terima. Tim kami akan meninjau data terkait dan memverifikasi kasus ini.`;
+  const label = context === "nomor pesanan terkait"
+    ? "nomor pesanan"
+    : context === "nomor atau email akun terkait"
+      ? "informasi akun"
+      : "informasi akun atau nomor pesanan";
+  const issue = /\b(saldo|poin|point)\b.*\b(0|nol|kosong)\b|\b(0|nol|kosong)\b.*\b(saldo|poin|point)\b/i.test(query)
+    ? "saldo poin yang tampil 0"
+    : "kasus ini";
+  return `Terima kasih, ${label} sudah kami terima. Tim kami akan memeriksa ${issue} dan memverifikasi data terkait.`;
 }
 
 export function pointAnswer(
@@ -257,7 +264,7 @@ export function pointAnswer(
     missing_context: missingContext,
     recommended_action: action,
     answer: `${summary}.`,
-    draft_reply: missingContext.length ? "" : `${suppliedContextReply(reply, context ?? "")}.`,
+    draft_reply: missingContext.length ? "" : suppliedContextReply(reply, context ?? "", contextQuery),
     citations,
     confidence: "high",
   };

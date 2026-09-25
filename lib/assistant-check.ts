@@ -157,7 +157,8 @@ if (process.argv[1]?.endsWith("assistant-check.ts")) {
   const nomorPesanannya = pointAnswer("Nomor pesanannya 1234567890", zeroBalanceDocuments, [{ role: "user", content: "Kenapa saldo poin 0?" }]);
   assert.equal(nomorPesanannya?.missing_context.length, 0);
   assert.notEqual(nomorPesanannya?.draft_reply, "");
-  assert.match(nomorPesanannya?.draft_reply ?? "", /sudah kami terima/);
+  assert.match(nomorPesanannya?.draft_reply ?? "", /nomor pesanan sudah kami terima/);
+  assert.match(nomorPesanannya?.draft_reply ?? "", /saldo poin yang tampil 0/);
   assert.doesNotMatch(nomorPesanannya?.draft_reply ?? "", /mohon kirimkan nomor/i);
   const context = updateActiveContext("Poin saya jadi 0", {}, false, "2026-01-01T00:00:00Z");
   assert.match(activeContextForPrompt(context), /Poin saya jadi 0/);
