@@ -151,6 +151,12 @@ if (process.argv[1]?.endsWith("assistant-check.ts")) {
   assert.equal(continuationSignal("Masih sama"), true);
   assert.equal(continuationSignal("itu"), true);
   assert.equal(continuationSignal("Cari SOP refund"), false);
+  // Regression: a label word ("nomor pesanannya") plus a bare identifier is
+  // still just supplying the identifier the agent asked for, not a new topic.
+  assert.equal(continuationSignal("Nomor pesanannya 1234567890"), true);
+  const nomorPesanannya = pointAnswer("Nomor pesanannya 1234567890", zeroBalanceDocuments, [{ role: "user", content: "Kenapa saldo poin 0?" }]);
+  assert.equal(nomorPesanannya?.missing_context.length, 0);
+  assert.notEqual(nomorPesanannya?.draft_reply, "");
   const context = updateActiveContext("Poin saya jadi 0", {}, false, "2026-01-01T00:00:00Z");
   assert.match(activeContextForPrompt(context), /Poin saya jadi 0/);
   assert.equal(updateActiveContext("Pembayaran saya gagal", context, false).topic.value, "Pembayaran saya gagal");

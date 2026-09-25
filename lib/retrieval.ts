@@ -14,11 +14,16 @@ function looksLikeBareIdentifier(word: string) {
   return /^\d{4,}$/.test(word) || /^[\w.+-]+@[\w.-]+\.[a-z]{2,}$/.test(word);
 }
 
+// Words that only ever label an identifier being supplied ("Nomor pesanannya
+// 1234567890"), never a complaint on their own. Combined with an identifier
+// elsewhere in the message, they still carry no new topic of their own.
+const identifierLabelWords = new Set(["nomor", "no", "id", "pesanan", "pesanannya", "order", "akun", "akunnya", "email"]);
+
 export function continuationSignal(query: string) {
   const normalized = query.toLowerCase();
   const words = normalized.match(/[a-z0-9À-ɏ@.+-]+/g) ?? [];
   if (/\b(itu|nya|tersebut|ini|sebelumnya|barusan)\b/.test(normalized)) return true;
-  if (words.length > 0 && words.length <= 2 && words.every((word) => looksLikeBareIdentifier(word))) return true;
+  if (words.length > 0 && words.every((word) => looksLikeBareIdentifier(word) || identifierLabelWords.has(word)) && words.some((word) => looksLikeBareIdentifier(word))) return true;
   return words.length <= 3 && words.every((word) => followUpWords.has(word));
 }
 
