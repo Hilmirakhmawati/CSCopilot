@@ -1,3 +1,20 @@
+// Malformed JSON bodies must map to 400 via errorResponse, not an unhandled
+// SyntaxError that falls through to 500.
+export async function readJson(request: Request): Promise<Record<string, unknown>> {
+  try {
+    return await request.json();
+  } catch {
+    throw new Error("Invalid JSON body");
+  }
+}
+
+// Audit events are observability, not the source of truth — a failed insert
+// must never turn an already-successful draft/message write into a 500 the
+// client retries (which then 404s as "already reviewed").
+export function logAuditFailure(action: string, error: unknown) {
+  console.error(`Failed to record audit event: ${action}`, error);
+}
+
 export function readText(value: unknown, field = "content", max = 12000): string {
   if (typeof value !== "string" || !value.trim()) throw new Error(`${field} is required`);
   const text = value.trim();

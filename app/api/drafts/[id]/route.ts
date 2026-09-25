@@ -1,5 +1,5 @@
 import { requireUser, getSupabaseAdmin } from "@/lib/db";
-import { errorResponse, readText } from "@/lib/validation";
+import { errorResponse, logAuditFailure, readJson, readText } from "@/lib/validation";
 import { enforceRateLimit, requestKey } from "@/lib/rate-limit";
 
 const MAX_VERSIONS = 20;
@@ -9,7 +9,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     const user = await requireUser(request);
     enforceRateLimit(requestKey(request, user.id));
     const { id } = await params;
-    const body = await request.json();
+    const body = await readJson(request);
     const content = readText(body.content);
     const restoredFromVersion = Number.isInteger(body.restored_from_version) ? body.restored_from_version : null;
     const db = getSupabaseAdmin();
@@ -33,7 +33,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     const { data, error } = await db.from("drafts").update({ content, updated_at: new Date().toISOString() }).eq("id", id).eq("status", "draft").select("*").single();
     if (error || !data) throw new Error("Draft not found or already reviewed");
     const audit = await db.from("audit_events").insert({ actor_id: user.id, entity_type: "draft", entity_id: id, action: "edited", metadata: restoredFromVersion ? { restored_from_version: restoredFromVersion } : {} });
-    if (audit.error) throw audit.error;
+    if (audit.error) logAuditFailure("draft edited", audit.error);
     return Response.json(data);
   } catch (error) { return errorResponse(error); }
 }

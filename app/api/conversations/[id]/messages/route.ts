@@ -1,6 +1,6 @@
 import { requireUser, getSupabaseAdmin } from "@/lib/db";
 import { processConversationMessage } from "@/lib/message-processing";
-import { errorResponse, readText } from "@/lib/validation";
+import { errorResponse, readJson, readText } from "@/lib/validation";
 import { enforceRateLimit, requestKey } from "@/lib/rate-limit";
 
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -25,7 +25,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const user = await requireUser(request);
     enforceRateLimit(requestKey(request, user.id));
     const { id } = await params;
-    const issue = readText((await request.json()).content);
+    const issue = readText((await readJson(request)).content);
     const idempotencyKey = request.headers.get("Idempotency-Key") || undefined;
     const result = await processConversationMessage(getSupabaseAdmin(), id, user.id, issue, idempotencyKey);
     return Response.json(result);

@@ -93,7 +93,7 @@ export function mapCitations(citations: ModelCitation[], documents: KnowledgeDoc
     .filter((citation): citation is GroundedAnswer["citations"][number] => Boolean(citation));
 }
 
-function fallback(issue: string, documents: KnowledgeDocument[], history: Array<{ role: "user" | "assistant"; content: string }> = []): GroundedAnswer {
+export function fallback(issue: string, documents: KnowledgeDocument[], history: Array<{ role: "user" | "assistant"; content: string }> = []): GroundedAnswer {
   if (isClosingMessage(issue)) {
     return {
       intent: "Conversation closed",
@@ -143,16 +143,20 @@ function fallback(issue: string, documents: KnowledgeDocument[], history: Array<
   // Answer with the document's own customer-safe content first; sources stay attached as citations.
   const summaryLine = best.content.split("\n").find((line) => line.startsWith("Customer Safe Summary:"))?.replace("Customer Safe Summary:", "").trim();
   const actionLine = best.content.split("\n").find((line) => line.startsWith("Customer Action:"))?.replace("Customer Action:", "").trim();
-  const answer = [summaryLine && `Kemungkinan penyebab: ${summaryLine}.`, actionLine && `Langkah penanganan: ${actionLine}.`].filter(Boolean).join("\n\n") || "Kami sedang meninjau kendala yang disampaikan dan akan memverifikasi penanganan yang sesuai.";
+  // Customer Action is an internal CS instruction, never customer-facing —
+  // only Customer Reply may become draft_reply (same rule as pointAnswer).
+  const replyLine = best.content.split("\n").find((line) => line.startsWith("Customer Reply:"))?.replace("Customer Reply:", "").trim();
+  const answer = summaryLine ? `Kemungkinan penyebab: ${summaryLine}.` : "Kami sedang meninjau kendala yang disampaikan dan akan memverifikasi penanganan yang sesuai.";
   return {
     intent: "Support issue",
     summary: `Kemungkinan penyebab dari: ${best.title}.`,
-    missing_context: [],
-    recommended_action: "Review the cited knowledge and confirm it applies to this customer's case before responding.",
+    missing_context: replyLine ? [] : ["Artikel ini belum memiliki field Customer Reply. Tinjau dan lengkapi di Notion sebelum draft dapat dibuat otomatis."],
+    recommended_action: actionLine || "Review the cited knowledge and confirm it applies to this customer's case before responding.",
     answer,
-    draft_reply: actionLine ? `Terima kasih sudah menghubungi kami. ${actionLine}` : "Terima kasih sudah menghubungi kami. Kami sedang meninjau kendala yang disampaikan dan akan memverifikasi langkah penanganan yang sesuai.",
+    draft_reply: replyLine ? `Terima kasih sudah menghubungi kami. ${replyLine}` : "",
     citations,
-    confidence: "medium",
+    confidence: replyLine ? "medium" : "low",
+    ...(replyLine ? {} : { knowledge_gap: true }),
   };
 }
 
@@ -199,15 +203,18 @@ ${context || "No reliable source found."}
 
 Return only JSON with this shape:
 {
+  "intent": "short issue category",
+  "summary": "concise grounded summary",
+  "missing_context": [],
+  "recommended_action": "internal CS next step",
   "answer": "customer-facing answer",
   "draft_reply": "customer-facing suggested reply",
-  "citations": [{"reference_index": 0, "quote": "short quote"}],
-  "missing_context": "what is still needed, or empty string",
-  "confidence": "high | medium | low"
+  "citations": [{"reference_index": 1, "quote": "short quote"}],
+  "confidence": "high"
 }
 
-If missing_context is non-empty, answer must be the targeted clarifying question, draft_reply must be empty, and confidence must be low.
-Each reference_index must refer to a source in KNOWLEDGE CONTEXT.
+Use an array of strings for missing_context. If missing_context is non-empty, answer must be the targeted clarifying question, draft_reply must be empty, and confidence must be low.
+Each reference_index must be a 1-based reference number from KNOWLEDGE CONTEXT.
 Do not invent facts not supported by the knowledge context or conversation.`
   },
 ],

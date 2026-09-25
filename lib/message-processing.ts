@@ -233,31 +233,41 @@ async function processConversationMessageUnlocked(
       if (error) console.error("Failed to record query telemetry", error);
     });
 
-    const output = await db
-      .from("messages")
-      .insert({
-        conversation_id: conversationId,
-        role: "assistant",
-        content: answer.answer,
-        citations: answer.citations,
-        ...(key ? { idempotency_key: key, reply_to_id: input.data.id } : {}),
-      })
-      .select("id,content,citations,created_at")
-      .single();
-    if (output.error) throw output.error;
-
-    const updated = await db
-      .from("conversations")
-      .update(contextColumnsAvailable
-        ? { active_context: activeContext, context_summary: nextSummary, context_updated_at: new Date().toISOString(), updated_at: new Date().toISOString() }
-        : { updated_at: new Date().toISOString() })
-      .eq("id", conversationId);
-    if (updated.error) throw updated.error;
+    let assistantId: string;
+    let assistantCreatedAt: string | undefined;
+    if (contextColumnsAvailable) {
+      // The RPC commits assistant insertion + context update in one DB
+      // transaction. The model call stays outside the transaction.
+      const committed = await db.rpc("commit_message_turn", {
+        p_conversation_id: conversationId,
+        p_user_id: userId,
+        p_user_message_id: input.data.id,
+        p_idempotency_key: key ?? null,
+        p_assistant_content: answer.answer,
+        p_citations: answer.citations,
+        p_active_context: activeContext,
+        p_context_summary: nextSummary,
+      });
+      if (committed.error || !committed.data?.[0]) throw committed.error ?? new Error("Message turn commit failed");
+      assistantId = committed.data[0].assistant_message_id;
+      assistantCreatedAt = committed.data[0].assistant_created_at;
+    } else {
+      const output = await db
+        .from("messages")
+        .insert({ conversation_id: conversationId, role: "assistant", content: answer.answer, citations: answer.citations, ...(key ? { idempotency_key: key, reply_to_id: input.data.id } : {}) })
+        .select("id,created_at")
+        .single();
+      if (output.error) throw output.error;
+      assistantId = output.data.id;
+      assistantCreatedAt = output.data.created_at;
+      const updated = await db.from("conversations").update({ updated_at: new Date().toISOString() }).eq("id", conversationId);
+      if (updated.error) throw updated.error;
+    }
 
     return {
       ...answer,
-      message_id: output.data.id,
-      created_at: output.data.created_at,
+      message_id: assistantId,
+      created_at: assistantCreatedAt,
       sources: documents,
     };
   } catch (error) {

@@ -1,5 +1,5 @@
 import { requireUser, getSupabaseAdmin } from "@/lib/db";
-import { errorResponse, readText } from "@/lib/validation";
+import { errorResponse, logAuditFailure, readText } from "@/lib/validation";
 import { enforceRateLimit, requestKey } from "@/lib/rate-limit";
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -17,7 +17,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const { data, error } = await db.from("drafts").update({ status: "rejected", reviewed_by: user.id, reviewed_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq("id", id).eq("status", "draft").select("*").single();
     if (error || !data) throw new Error("Draft not found or already reviewed");
     const audit = await db.from("audit_events").insert({ actor_id: user.id, entity_type: "draft", entity_id: id, action: "rejected", metadata: reason ? { reason } : {} });
-    if (audit.error) throw audit.error;
+    if (audit.error) logAuditFailure("draft rejected", audit.error);
     return Response.json(data);
   } catch (error) { return errorResponse(error); }
 }

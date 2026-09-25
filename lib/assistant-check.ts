@@ -1,5 +1,5 @@
 import assert from "assert/strict";
-import { mapCitations, extractFirstJsonObject } from "./anthropic";
+import { fallback, mapCitations, extractFirstJsonObject } from "./anthropic";
 import { POINT_ARTICLE_TITLE_MATCHES, continuationSignal, pointAnswer, pointArticleTitle, isPointTopic } from "./retrieval";
 import { activeContextForPrompt, trimHistoryToBudget, updateActiveContext } from "./context";
 import type { Citation, KnowledgeDocument } from "./assistant-types";
@@ -69,6 +69,13 @@ if (process.argv[1]?.endsWith("assistant-check.ts")) {
   assert.equal(legacyPoint?.citations.length, 1);
   assert.equal(legacyPoint?.answer.includes("Kemungkinan penyebab"), false);
   assert.equal(legacyPoint?.answer.includes("Minta nomor pesanan"), false);
+
+  // Same legacy-row shape through the generic fallback() path (no Anthropic
+  // response) — Customer Action must never leak into draft_reply here either.
+  const legacyFallback = fallback("saldo poin saya bermasalah", legacyDocuments);
+  assert.equal(legacyFallback.draft_reply, "");
+  assert.equal(legacyFallback.draft_reply.includes("Minta nomor pesanan terkait untuk verifikasi"), false);
+  assert.equal(legacyFallback.knowledge_gap, true);
 
   const pointDocuments: KnowledgeDocument[] = [{
     id: "point-1b",
