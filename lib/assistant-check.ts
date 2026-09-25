@@ -160,6 +160,25 @@ if (process.argv[1]?.endsWith("assistant-check.ts")) {
   assert.match(nomorPesanannya?.draft_reply ?? "", /nomor pesanan sudah kami terima/);
   assert.match(nomorPesanannya?.draft_reply ?? "", /saldo poin yang tampil 0/);
   assert.doesNotMatch(nomorPesanannya?.draft_reply ?? "", /mohon kirimkan nomor/i);
+
+  // Regression: a Customer Reply that uses "silakan"/"mohon" for something
+  // unrelated to requesting an identifier (e.g. pointing to an email) must be
+  // sent verbatim, not overridden by the generic acknowledgement template.
+  const unrelatedPoliteWordingDocuments: KnowledgeDocument[] = [{
+    id: "point-0b",
+    title: POINT_ARTICLE_TITLE_MATCHES[0],
+    url: "https://notion.so/point-0b",
+    content:
+      "Customer Safe Summary: Saldo poin dapat menampilkan 0 karena kendala sinkronisasi.\n" +
+      "Customer Action: Minta nomor pesanan terkait untuk verifikasi.\n" +
+      "Required Context: Nomor order\n" +
+      "Customer Reply: Terima kasih sudah menghubungi kami, silakan cek email Anda untuk melihat status pengajuan terkait saldo poin Anda",
+    category: "points",
+    synced_at: "",
+  }];
+  const unrelatedPoliteWording = pointAnswer("Nomor pesanannya 1234567890", unrelatedPoliteWordingDocuments, [{ role: "user", content: "Kenapa saldo poin 0?" }]);
+  assert.equal(unrelatedPoliteWording?.missing_context.length, 0);
+  assert.match(unrelatedPoliteWording?.draft_reply ?? "", /silakan cek email Anda untuk melihat status pengajuan/);
   const context = updateActiveContext("Poin saya jadi 0", {}, false, "2026-01-01T00:00:00Z");
   assert.match(activeContextForPrompt(context), /Poin saya jadi 0/);
   assert.equal(updateActiveContext("Pembayaran saya gagal", context, false).topic.value, "Pembayaran saya gagal");

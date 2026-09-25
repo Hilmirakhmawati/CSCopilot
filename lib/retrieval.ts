@@ -168,8 +168,12 @@ function requiredContext(action: string, explicit: string) {
   return null;
 }
 
+// Must match an actual "please send us the order/account number" request —
+// not just any reply containing a polite word like "mohon"/"silakan", which
+// could equally appear in a valid customer-facing sentence unrelated to
+// asking for an identifier (e.g. "Silakan cek email Anda untuk status...").
 function requestsContext(reply: string) {
-  return /\b(mohon|silakan|kirimkan|kirim|berikan|cantumkan|masukkan)\b/i.test(reply);
+  return /\b(mohon|silakan|tolong)\b[^.!?]{0,80}\b(kirim|kirimkan|berikan|cantumkan|masukkan)\b[^.!?]{0,40}\b(nomor|akun|pesanan|order|email|id)\b/i.test(reply);
 }
 
 function suppliedContextReply(reply: string, context: string, query: string) {
