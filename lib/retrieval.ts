@@ -289,8 +289,13 @@ export async function retrieveKnowledge(query: string, history: Array<{ role: "u
   const pointTopic = isPointTopic(combinedQuery);
   const own = await search(supabase, query);
   if (!pointTopic) {
-    if (own.length || !continuationSignal(query) || !priorUserText) return own;
-    return search(supabase, combinedQuery);
+    // A continuation's raw query ("itu gimana solusinya?") carries no topic
+    // keywords of its own — any hit it gets is incidental full-text noise, not
+    // a real match. Prefer the history-combined query; only fall back to the
+    // raw-query hit if the combined search truly finds nothing.
+    if (!continuation) return own;
+    const combined = await search(supabase, combinedQuery);
+    return combined.length ? combined : own;
   }
 
   // Search by the canonical article title as a bounded fallback. This handles
