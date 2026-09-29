@@ -1,7 +1,8 @@
 import assert from "assert/strict";
 import { fallback, mapCitations, extractFirstJsonObject } from "./anthropic";
-import { POINT_ARTICLE_TITLE_MATCHES, continuationSignal, pointAnswer, pointArticleTitle, isPointTopic } from "./retrieval";
+import { POINT_ARTICLE_TITLE_MATCHES, continuationSignal, contextSatisfied, pointAnswer, pointArticleTitle, isPointTopic, selectPointArticle } from "./retrieval";
 import { activeContextForPrompt, trimHistoryToBudget, updateActiveContext } from "./context";
+import { readJson } from "./validation";
 import type { Citation, KnowledgeDocument } from "./assistant-types";
 
 const uuidPattern = "[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
@@ -76,6 +77,32 @@ if (process.argv[1]?.endsWith("assistant-check.ts")) {
   assert.equal(legacyFallback.draft_reply, "");
   assert.equal(legacyFallback.draft_reply.includes("Minta nomor pesanan terkait untuk verifikasi"), false);
   assert.equal(legacyFallback.knowledge_gap, true);
+
+  // Fallback must enforce Required Context too, not only Customer Reply.
+  const genericContextDocuments: KnowledgeDocument[] = [{
+    id: "generic-1",
+    title: "Order status",
+    url: "https://notion.so/generic-1",
+    content: "Customer Safe Summary: Status order perlu diverifikasi.\nCustomer Action: Verifikasi data order.\nRequired Context: Nomor order\nCustomer Reply: Kami akan memeriksa status order Anda",
+    category: null,
+    synced_at: "",
+  }];
+  const fallbackWithoutOrder = fallback("status order saya", genericContextDocuments);
+  assert.equal(fallbackWithoutOrder.draft_reply, "");
+  assert.ok(fallbackWithoutOrder.missing_context.some((item) => /nomor pesanan terkait/.test(item)));
+
+  // An unlabeled number may be an order number, but not an account identifier.
+  assert.equal(contextSatisfied("nomor pesanan terkait", "1234567890"), true);
+  assert.equal(contextSatisfied("nomor atau email akun terkait", "1234567890"), false);
+  assert.equal(contextSatisfied("nomor atau email akun terkait", "akun 1234567890"), true);
+  assert.equal(contextSatisfied("nomor atau email akun terkait", "customer@example.com"), true);
+
+  // Broad point retrieval must not silently pick one of multiple active articles.
+  const ambiguousPointDocuments = [
+    { ...legacyDocuments[0], id: "point-a", title: POINT_ARTICLE_TITLE_MATCHES[0] },
+    { ...legacyDocuments[0], id: "point-b", title: POINT_ARTICLE_TITLE_MATCHES[1] },
+  ];
+  assert.deepEqual(selectPointArticle(ambiguousPointDocuments, null), []);
 
   const pointDocuments: KnowledgeDocument[] = [{
     id: "point-1b",
@@ -192,6 +219,18 @@ if (process.argv[1]?.endsWith("assistant-check.ts")) {
     enforceMissingContextInvariant({ missing_context: [], draft_reply: "Terima kasih..." }),
     { missing_context: [], draft_reply: "Terima kasih..." },
   );
+
+  // JSON primitives and arrays must be rejected before routes dereference body fields.
+  void (async () => {
+    for (const value of [null, [], "text", 42, true]) {
+      await assert.rejects(() => readJson(new Request("http://localhost", {
+        method: "POST",
+        body: JSON.stringify(value),
+        headers: { "content-type": "application/json" },
+      })), /Invalid JSON body/);
+    }
+    console.log("readJson shape check passed");
+  })();
 
   console.log("assistant-check passed");
 }

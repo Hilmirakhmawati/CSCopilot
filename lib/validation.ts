@@ -1,11 +1,14 @@
 // Malformed JSON bodies must map to 400 via errorResponse, not an unhandled
 // SyntaxError that falls through to 500.
 export async function readJson(request: Request): Promise<Record<string, unknown>> {
+  let body: unknown;
   try {
-    return await request.json();
+    body = await request.json();
   } catch {
     throw new Error("Invalid JSON body");
   }
+  if (typeof body !== "object" || body === null || Array.isArray(body)) throw new Error("Invalid JSON body");
+  return body as Record<string, unknown>;
 }
 
 // Audit events are observability, not the source of truth — a failed insert

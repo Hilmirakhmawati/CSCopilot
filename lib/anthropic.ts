@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { GroundedAnswer, KnowledgeDocument } from "./assistant-types";
-import { continuationSignal, greetingAnswer, isClosingMessage, isGreetingOnly, pointAnswer } from "./retrieval";
+import { continuationSignal, greetingAnswer, isClosingMessage, isGreetingOnly, missingContextMessage, pointAnswer, requiredContext, sourceLine } from "./retrieval";
 import { withRetry } from "./retry";
 import { enforceMissingContextInvariant } from "./assistant-check";
 
@@ -141,22 +141,32 @@ export function fallback(issue: string, documents: KnowledgeDocument[], history:
   }));
   const best = ranked[0];
   // Answer with the document's own customer-safe content first; sources stay attached as citations.
-  const summaryLine = best.content.split("\n").find((line) => line.startsWith("Customer Safe Summary:"))?.replace("Customer Safe Summary:", "").trim();
-  const actionLine = best.content.split("\n").find((line) => line.startsWith("Customer Action:"))?.replace("Customer Action:", "").trim();
+  const summaryLine = sourceLine(best.content, "Customer Safe Summary");
+  const actionLine = sourceLine(best.content, "Customer Action");
   // Customer Action is an internal CS instruction, never customer-facing —
   // only Customer Reply may become draft_reply (same rule as pointAnswer).
-  const replyLine = best.content.split("\n").find((line) => line.startsWith("Customer Reply:"))?.replace("Customer Reply:", "").trim();
+  const replyLine = sourceLine(best.content, "Customer Reply");
+  const explicitContext = sourceLine(best.content, "Required Context");
+  const context = requiredContext(actionLine, explicitContext);
+  const contextQuery = continuationSignal(issue)
+    ? [...history.filter((message) => message.role === "user").slice(-3).map((message) => message.content), issue].join(" ")
+    : issue;
+  const missingContext = missingContextMessage(context, contextQuery);
+  const missing = [
+    ...(missingContext ? [missingContext] : []),
+    ...(!replyLine ? ["Artikel ini belum memiliki field Customer Reply. Tinjau dan lengkapi di Notion sebelum draft dapat dibuat otomatis."] : []),
+  ];
   const answer = summaryLine ? `Kemungkinan penyebab: ${summaryLine}.` : "Kami sedang meninjau kendala yang disampaikan dan akan memverifikasi penanganan yang sesuai.";
   return {
     intent: "Support issue",
     summary: `Kemungkinan penyebab dari: ${best.title}.`,
-    missing_context: replyLine ? [] : ["Artikel ini belum memiliki field Customer Reply. Tinjau dan lengkapi di Notion sebelum draft dapat dibuat otomatis."],
+    missing_context: missing,
     recommended_action: actionLine || "Review the cited knowledge and confirm it applies to this customer's case before responding.",
     answer,
-    draft_reply: replyLine ? `Terima kasih sudah menghubungi kami. ${replyLine}` : "",
+    draft_reply: missing.length ? "" : `Terima kasih sudah menghubungi kami. ${replyLine}`,
     citations,
-    confidence: replyLine ? "medium" : "low",
-    ...(replyLine ? {} : { knowledge_gap: true }),
+    confidence: missing.length ? "low" : "medium",
+    ...(missing.length ? { knowledge_gap: true } : {}),
   };
 }
 

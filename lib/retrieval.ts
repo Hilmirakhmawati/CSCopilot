@@ -139,11 +139,13 @@ export function restrictToActivePointArticles(documents: KnowledgeDocument[]) {
   return documents.filter((document) => POINT_ARTICLE_TITLE_MATCHES.some((match) => titleMatches(document.title, match)));
 }
 
-function selectPointArticle(documents: KnowledgeDocument[], target: string | null) {
-  return target ? documents.filter((document) => titleMatches(document.title, target)) : restrictToActivePointArticles(documents);
+export function selectPointArticle(documents: KnowledgeDocument[], target: string | null) {
+  const selected = target ? documents.filter((document) => titleMatches(document.title, target)) : restrictToActivePointArticles(documents);
+  if (!target && new Set(selected.map((document) => document.id)).size > 1) return [];
+  return selected;
 }
 
-function sourceLine(content: string, label: string) {
+export function sourceLine(content: string, label: string) {
   return content.split("\n").find((line) => line.toLowerCase().startsWith(`${label.toLowerCase()}:`))?.slice(label.length + 1).trim().replace(/[.!?]+$/, "").trim() ?? "";
 }
 
@@ -158,7 +160,7 @@ function sourceLine(content: string, label: string) {
 // draft creation forever, since it could never be marked satisfied honestly.
 // ponytail: add attachment upload + Vision review, then reinstate a
 // screenshot requirement category here.
-function requiredContext(action: string, explicit: string) {
+export function requiredContext(action: string, explicit: string) {
   const value = `${explicit} ${action}`.toLowerCase();
   const hasOrder = /\b(nomor pesanan|nomor order|order id|id pesanan)\b/.test(value);
   const hasAccount = /\b(nomor akun|id akun|email akun)\b/.test(value);
@@ -166,6 +168,21 @@ function requiredContext(action: string, explicit: string) {
   if (hasOrder) return "nomor pesanan terkait";
   if (hasAccount) return "nomor atau email akun terkait";
   return null;
+}
+
+export function contextSatisfied(context: string | null, query: string) {
+  if (!context) return true;
+  const hasOrder = /\b\d{6,}\b/.test(query);
+  const hasLabeledAccount = /(?:\b(?:akun|account)(?:\s+(?:id|number|nomor))?\s*[:#-]?\s*\d{6,}|\b(?:id|nomor)\s+akun\s*[:#-]?\s*\d{6,}|\b\d{6,}\s+(?:akun|account)\b)/i.test(query);
+  const hasEmail = /[\w.+-]+@[\w.-]+\.[a-z]{2,}/i.test(query);
+  if (context === "nomor pesanan terkait") return hasOrder;
+  if (context === "nomor atau email akun terkait") return hasEmail || hasLabeledAccount;
+  if (context === "nomor akun atau nomor pesanan terkait") return hasOrder || hasEmail || hasLabeledAccount;
+  return false;
+}
+
+export function missingContextMessage(context: string | null, query: string) {
+  return context && !contextSatisfied(context, query) ? `Mohon minta ${context} sebelum kasus ini diverifikasi.` : null;
 }
 
 // Must match an actual "please send us the order/account number" request —
@@ -234,18 +251,8 @@ export function pointAnswer(
   }
 
   const context = requiredContext(action, explicitContext);
-  const suppliedOrderNumber = /\b\d{6,}\b/.test(contextQuery);
-  const suppliedAccountIdentifier = /\b(?:\d{6,}|[\w.+-]+@[\w.-]+\.[a-z]{2,})\b/i.test(contextQuery);
-  const contextSatisfied = context === "nomor pesanan terkait"
-    ? suppliedOrderNumber
-    : context === "nomor atau email akun terkait"
-      ? suppliedAccountIdentifier
-      : context === "nomor akun atau nomor pesanan terkait"
-        ? suppliedAccountIdentifier
-        : false;
-  const missingContext = context && !contextSatisfied
-    ? [`Mohon minta ${context} sebelum kasus ini diverifikasi.`]
-    : [];
+  const missingContext = missingContextMessage(context, contextQuery);
+  const missingContextItems = missingContext ? [missingContext] : [];
   // Customer Action is an internal instruction to the agent, never a reply
   // to send verbatim. Without an explicit Customer Reply field, the app
   // must not invent customer-facing wording from it.
@@ -265,10 +272,10 @@ export function pointAnswer(
   return {
     intent: "Point support issue",
     summary,
-    missing_context: missingContext,
+    missing_context: missingContextItems,
     recommended_action: action,
     answer: `${summary}.`,
-    draft_reply: missingContext.length ? "" : suppliedContextReply(reply, context ?? "", contextQuery),
+    draft_reply: missingContextItems.length ? "" : suppliedContextReply(reply, context ?? "", contextQuery),
     citations,
     confidence: "high",
   };
@@ -306,7 +313,7 @@ export async function retrieveKnowledge(query: string, history: Array<{ role: "u
   const targeted = selectPointArticle(targetResults, pointTarget);
   if (direct.length) return direct;
   if (targeted.length) return targeted;
-  if (!continuationSignal(query) || !priorUserText) return restrictToActivePointArticles(own);
+  if (!continuationSignal(query) || !priorUserText) return selectPointArticle(own, null);
 
   const priorSearch = await search(supabase, combinedQuery);
   return selectPointArticle(priorSearch, pointTarget);
