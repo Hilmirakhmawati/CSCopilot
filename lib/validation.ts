@@ -37,6 +37,9 @@ export function errorResponse(error: unknown) {
   if (/^Too many requests$/i.test(detail)) {
     return Response.json({ error: detail }, { status: 429, headers: { "Retry-After": "60" } });
   }
+  if (/^Request already in progress/i.test(detail)) {
+    return Response.json({ error: detail }, { status: 409, headers: { "Retry-After": "2" } });
+  }
   if (/not found|already reviewed/i.test(detail)) {
     return Response.json({ error: "Resource not found" }, { status: 404 });
   }

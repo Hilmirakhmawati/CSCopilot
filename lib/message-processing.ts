@@ -186,15 +186,24 @@ async function processConversationMessageUnlocked(
     .single();
   if (input.error) {
     if (key && input.error.code === "23505") {
-      const existing = await db
-        .from("messages")
-        .select("id,role,content,citations,created_at,idempotency_key")
-        .eq("conversation_id", conversationId)
-        .eq("idempotency_key", key)
-        .eq("role", "assistant")
-        .maybeSingle();
-      if (existing.error) throw existing.error;
-      if (existing.data) return replayResult(existing.data as StoredMessage);
+      // Another instance (no shared lock across processes — see
+      // conversationLocks above) already inserted the user message for this
+      // key and may still be generating the reply. Poll briefly instead of
+      // failing immediately; if it never lands, ask the client to retry
+      // rather than surfacing a raw 500 for a request that is in flight.
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const existing = await db
+          .from("messages")
+          .select("id,role,content,citations,created_at,idempotency_key")
+          .eq("conversation_id", conversationId)
+          .eq("idempotency_key", key)
+          .eq("role", "assistant")
+          .maybeSingle();
+        if (existing.error) throw existing.error;
+        if (existing.data) return replayResult(existing.data as StoredMessage);
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+      throw new Error("Request already in progress, please retry");
     }
     throw input.error;
   }
@@ -248,9 +257,31 @@ async function processConversationMessageUnlocked(
         p_active_context: activeContext,
         p_context_summary: nextSummary,
       });
-      if (committed.error || !committed.data?.[0]) throw committed.error ?? new Error("Message turn commit failed");
-      assistantId = committed.data[0].assistant_message_id;
-      assistantCreatedAt = committed.data[0].assistant_created_at;
+      const rpcUnavailable = committed.error && ["PGRST202", "42883"].includes(committed.error.code ?? "");
+      if (committed.error && !rpcUnavailable) throw committed.error;
+      if (!committed.data?.[0] && !rpcUnavailable) throw new Error("Message turn commit failed");
+      if (rpcUnavailable) {
+        // Migration 006 may be applied after the API deploy. Preserve service
+        // availability with the legacy two-write path until the RPC exists;
+        // once present, the atomic transaction above remains the default.
+        const output = await db
+          .from("messages")
+          .insert({ conversation_id: conversationId, role: "assistant", content: answer.answer, citations: answer.citations, ...(key ? { idempotency_key: key, reply_to_id: input.data.id } : {}) })
+          .select("id,created_at")
+          .single();
+        if (output.error) throw output.error;
+        assistantId = output.data.id;
+        assistantCreatedAt = output.data.created_at;
+        const updated = await db.from("conversations").update({ active_context: activeContext, context_summary: nextSummary, context_updated_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq("id", conversationId);
+        if (updated.error) {
+          const rollback = await db.from("messages").delete().eq("id", assistantId).eq("role", "assistant");
+          if (rollback.error) console.error("Failed to roll back assistant message after context update failure", rollback.error);
+          throw updated.error;
+        }
+      } else {
+        assistantId = committed.data[0].assistant_message_id;
+        assistantCreatedAt = committed.data[0].assistant_created_at;
+      }
     } else {
       const output = await db
         .from("messages")

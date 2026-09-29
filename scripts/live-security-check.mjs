@@ -48,5 +48,30 @@ assert.equal(own.status, 200, `QA user cannot read own conversation: ${own.statu
 const missing = await api("/api/conversations/00000000-0000-4000-8000-000000000000/messages", {}, token);
 assert.equal(missing.status, 404, `Unknown conversation should return 404, got ${missing.status}`);
 
+// Regression: invalid content must be rejected before any conversation row
+// is written — no orphan conversation left behind.
+const beforeList = await api("/api/conversations", {}, token);
+const beforeCount = (await beforeList.json()).length;
+const invalidContent = await api("/api/conversations", {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({ title: "Should not be created", content: "   " }),
+}, token);
+assert.equal(invalidContent.status, 400, `Empty content should 400, got ${invalidContent.status}`);
+const afterList = await api("/api/conversations", {}, token);
+const afterCount = (await afterList.json()).length;
+assert.equal(afterCount, beforeCount, "Invalid content left an orphan conversation");
+
+for (const body of ["{not valid json", "null", "[]"]) {
+  const malformed = await api("/api/conversations", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body,
+  }, token);
+  assert.equal(malformed.status, 400, `Invalid conversation JSON should 400, got ${malformed.status}`);
+}
+const finalList = await api("/api/conversations", {}, token);
+assert.equal((await finalList.json()).length, beforeCount, "Invalid JSON/body shape left an orphan conversation");
+
 console.log("live-security-check passed (QA login, 403 admin, ownership boundary)");
 console.log(`Created QA conversation: ${conversation.id}`);

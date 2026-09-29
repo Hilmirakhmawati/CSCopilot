@@ -1,34 +1,46 @@
 import { requireUser, getSupabaseAdmin } from "@/lib/db";
 import { processConversationMessage, idempotencyReady } from "@/lib/message-processing";
-import { errorResponse, readText } from "@/lib/validation";
+import { errorResponse, readJson, readText } from "@/lib/validation";
 import { enforceRateLimit, requestKey } from "@/lib/rate-limit";
 
 export async function POST(request: Request) {
   try {
     const user = await requireUser(request);
     enforceRateLimit(requestKey(request, user.id));
-    const body = await request.json().catch(() => ({}));
+    const body = await readJson(request);
     const db = getSupabaseAdmin();
     const { error: profileError } = await db.from("profiles").upsert({ id: user.id, email: user.email ?? `${user.id}@internal` }, { onConflict: "id" });
     if (profileError) throw profileError;
     const title = body.title === undefined || body.title === null || body.title === "" ? "New support case" : readText(body.title, "title", 120);
+    // Validate optional content before any write — throwing here must leave
+    // no conversation row behind (previously the insert ran first, so an
+    // invalid content shape orphaned an empty conversation).
+    const content = body.content !== undefined ? readText(body.content) : undefined;
     const rawKey = request.headers.get("Idempotency-Key") || undefined;
     const idempotencyKey = rawKey && (await idempotencyReady(db)) ? rawKey : undefined;
     if (idempotencyKey) {
       const existing = await db.from("conversations").select("id,title,status,created_at").eq("created_by", user.id).eq("idempotency_key", idempotencyKey).maybeSingle();
       if (existing.error) throw existing.error;
       if (existing.data) {
-        if (body.content === undefined) return Response.json(existing.data, { status: 201 });
-        const result = await processConversationMessage(db, existing.data.id, user.id, readText(body.content), idempotencyKey);
+        if (content === undefined) return Response.json(existing.data, { status: 201 });
+        const result = await processConversationMessage(db, existing.data.id, user.id, content, idempotencyKey);
         return Response.json({ conversation: existing.data, ...result }, { status: 201 });
       }
     }
     const { data, error } = await db.from("conversations").insert(idempotencyKey
       ? { created_by: user.id, title, idempotency_key: idempotencyKey }
       : { created_by: user.id, title }).select("id,title,status,created_at").single();
-    if (error) throw error;
-    if (body.content !== undefined) {
-      const content = readText(body.content);
+    if (error) {
+      if (idempotencyKey && error.code === "23505") {
+        const existing = await db.from("conversations").select("id,title,status,created_at").eq("created_by", user.id).eq("idempotency_key", idempotencyKey).single();
+        if (existing.error) throw existing.error;
+        if (content === undefined) return Response.json(existing.data, { status: 201 });
+        const result = await processConversationMessage(db, existing.data.id, user.id, content, idempotencyKey);
+        return Response.json({ conversation: existing.data, ...result }, { status: 201 });
+      }
+      throw error;
+    }
+    if (content !== undefined) {
       const result = await processConversationMessage(db, data.id, user.id, content, idempotencyKey);
       return Response.json({ conversation: data, ...result }, { status: 201 });
     }
