@@ -1,6 +1,6 @@
 import assert from "assert/strict";
 import { fallback, generateNoAiAnswer, mapCitations, extractFirstJsonObject } from "./anthropic";
-import { POINT_ARTICLE_TITLE_MATCHES, continuationSignal, contextSatisfied, pointAnswer, pointArticleTitle, isPointTopic, selectPointArticle } from "./retrieval";
+import { POINT_ARTICLE_TITLE_MATCHES, continuationSignal, contextSatisfied, isSarcasticOrDismissive, pointAnswer, pointArticleTitle, isPointTopic, selectPointArticle } from "./retrieval";
 import { activeContextForPrompt, trimHistoryToBudget, updateActiveContext } from "./context";
 import { readJson } from "./validation";
 import type { Citation, KnowledgeDocument } from "./assistant-types";
@@ -290,6 +290,17 @@ if (process.argv[1]?.endsWith("assistant-check.ts")) {
     }
     console.log("readJson shape check passed");
   })();
+
+  // Sarcasm/dismissive-reaction detection: known idioms route to
+  // clarification instead of being treated as a literal answerable message.
+  assert.equal(isSarcasticOrDismissive("yaelah, aku ga ngerti"), true);
+  assert.equal(isSarcasticOrDismissive("ya ampun ribet banget"), true);
+  assert.equal(isSarcasticOrDismissive("bagus banget nih aplikasinya, error terus"), true);
+  assert.equal(isSarcasticOrDismissive("Project A: aplikasi tidak bisa login, muncul error invalid token"), false);
+  assert.equal(isSarcasticOrDismissive("Nomor pesanannya 1234567890"), false);
+  const sarcasmFallback = fallback("yaelah, aku ga ngerti", []);
+  assert.equal(sarcasmFallback.draft_reply, "");
+  assert.equal(sarcasmFallback.missing_context.length > 0, true);
 
   console.log("assistant-check passed");
 }

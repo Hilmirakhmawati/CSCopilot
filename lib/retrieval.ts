@@ -27,6 +27,21 @@ export function continuationSignal(query: string) {
   return words.length <= 3 && words.every((word) => followUpWords.has(word));
 }
 
+// Best-effort recognition of common Indonesian sarcastic/dismissive
+// reactions in CS chat. This is a fixed list of known idioms plus one
+// "ironic praise + issue word" pattern — not a general sarcasm classifier;
+// sarcasm is tone- and context-dependent and cannot be fully captured by
+// regex. Its only job is to stop the deterministic fallback from treating a
+// sarcastic reaction as a literal statement worth keyword-ranking against a
+// document — the message still gets a clarifying question, same as a
+// genuine zero-match case.
+const sarcasticMarkers = /\b(yaelah|ya\s+ampun|halah|ish|duh|terserah|yah\s+gitu\s+deh|gitu\s+doang)\b/i;
+const ironicPraise = /\b(bagus|keren|mantap|hebat)\s+(banget|sekali)\b.{0,60}\b(error|gagal|rusak|lemot|lambat|nge-?lag|ngadat|macet)\b|\b(error|gagal|rusak|lemot|lambat|nge-?lag|ngadat|macet)\b.{0,60}\b(bagus|keren|mantap|hebat)\s+(banget|sekali)\b/i;
+
+export function isSarcasticOrDismissive(query: string) {
+  return sarcasticMarkers.test(query) || ironicPraise.test(query);
+}
+
 // Pleasantries/closers ("oke terima kasih") need no knowledge search at all —
 // searching would just reuse whatever the last topic's documents were.
 export function isClosingMessage(query: string) {

@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { GroundedAnswer, KnowledgeDocument } from "./assistant-types";
-import { continuationSignal, greetingAnswer, isClosingMessage, isGreetingOnly, isPointTopic, missingContextMessage, pointAnswer, requiredContext, sourceLine } from "./retrieval";
+import { continuationSignal, greetingAnswer, isClosingMessage, isGreetingOnly, isPointTopic, isSarcasticOrDismissive, missingContextMessage, pointAnswer, requiredContext, sourceLine } from "./retrieval";
 import { withRetry } from "./retry";
 import { enforceMissingContextInvariant } from "./assistant-check";
 
@@ -139,6 +139,18 @@ export function fallback(issue: string, documents: KnowledgeDocument[], history:
   const contextText = continuationSignal(issue)
     ? [...history.filter((message) => message.role === "user").slice(-3).map((message) => message.content), issue].join(" ")
     : issue;
+  if (isSarcasticOrDismissive(issue)) {
+    return {
+      intent: "Needs clarification",
+      summary: "The latest message may be a sarcastic or dismissive reaction and does not add reliable issue details.",
+      missing_context: ["Mohon jelaskan bagian issue yang masih belum jelas atau informasi apa yang ingin ditindaklanjuti."],
+      recommended_action: "Clarify the customer's intended question before preparing a reply.",
+      answer: "Bagian mana yang masih belum jelas atau ingin ditindaklanjuti?",
+      draft_reply: "",
+      citations: [],
+      confidence: "low",
+    };
+  }
   const contextWords = words(contextText);
   const ranked = documents
     .map((document, index) => ({ document, index, score: [...words(`${document.title} ${document.content}`)].filter((word) => contextWords.has(word)).length }))
