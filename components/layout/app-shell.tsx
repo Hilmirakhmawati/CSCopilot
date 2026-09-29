@@ -13,14 +13,17 @@ export function AppShell({ children, active }: { children: React.ReactNode; acti
   const router = useRouter();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
-  // Client-side only for showing/hiding the nav link — the API route
-  // (requireAdmin) is the actual security boundary, this never gates access.
+  // Session here is stored client-side only (no auth cookie), so there is no
+  // server-side signal to gate on — this redirect is a UX nicety, not the
+  // security boundary. The real boundary is requireUser/requireAdmin on
+  // every API route, which runs regardless of what this shell renders.
   useEffect(() => {
     const supabase = getSupabasePublic();
     supabase.auth.getUser().then(({ data }) => {
-      if (!data.user) return;
+      if (!data.user) { router.replace("/login"); return; }
       return supabase.from("profiles").select("role").eq("id", data.user.id).single();
     }).then((result) => setIsAdmin(result?.data?.role === "admin")).catch(() => setIsAdmin(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const nav = [
     { href: "/assistant", key: "assistant" as const, label: "AI Assistant", icon: Bot },

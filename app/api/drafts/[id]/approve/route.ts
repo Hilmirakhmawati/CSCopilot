@@ -1,5 +1,5 @@
 import { requireUser, getSupabaseAdmin } from "@/lib/db";
-import { errorResponse } from "@/lib/validation";
+import { errorResponse, logAuditFailure } from "@/lib/validation";
 import { enforceRateLimit, requestKey } from "@/lib/rate-limit";
 import { hasCustomerFacingSourceLeak } from "@/lib/assistant-check";
 
@@ -23,10 +23,13 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const owner = await db.from("conversations").select("id").eq("id", draft.data.conversation_id).eq("created_by", user.id).single();
     if (owner.error) throw new Error("Draft not found or already reviewed");
     assertApprovable(draft.data.content);
-    const { data, error } = await db.from("drafts").update({ status: "approved", reviewed_by: user.id, reviewed_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq("id", id).eq("status", "draft").select("*").single();
-    if (error || !data) throw new Error("Draft not found or already reviewed");
+    // Guard the update with the exact content we just validated — if a
+    // concurrent PATCH changed it since the select above, this update
+    // matches zero rows instead of approving unvalidated content.
+    const { data, error } = await db.from("drafts").update({ status: "approved", reviewed_by: user.id, reviewed_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq("id", id).eq("status", "draft").eq("content", draft.data.content).select("*").single();
+    if (error || !data) throw new Error("Draft not found, already reviewed, or edited concurrently");
     const audit = await db.from("audit_events").insert({ actor_id: user.id, entity_type: "draft", entity_id: id, action: "approved", metadata: { external_send: false } });
-    if (audit.error) throw audit.error;
+    if (audit.error) logAuditFailure("draft approved", audit.error);
     return Response.json({ ...data, external_send: false });
   } catch (error) { return errorResponse(error); }
 }

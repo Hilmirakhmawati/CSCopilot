@@ -14,11 +14,16 @@ function looksLikeBareIdentifier(word: string) {
   return /^\d{4,}$/.test(word) || /^[\w.+-]+@[\w.-]+\.[a-z]{2,}$/.test(word);
 }
 
+// Words that only ever label an identifier being supplied ("Nomor pesanannya
+// 1234567890"), never a complaint on their own. Combined with an identifier
+// elsewhere in the message, they still carry no new topic of their own.
+const identifierLabelWords = new Set(["nomor", "no", "id", "pesanan", "pesanannya", "order", "akun", "akunnya", "email"]);
+
 export function continuationSignal(query: string) {
   const normalized = query.toLowerCase();
   const words = normalized.match(/[a-z0-9À-ɏ@.+-]+/g) ?? [];
   if (/\b(itu|nya|tersebut|ini|sebelumnya|barusan)\b/.test(normalized)) return true;
-  if (words.length > 0 && words.length <= 2 && words.every((word) => looksLikeBareIdentifier(word))) return true;
+  if (words.length > 0 && words.every((word) => looksLikeBareIdentifier(word) || identifierLabelWords.has(word)) && words.some((word) => looksLikeBareIdentifier(word))) return true;
   return words.length <= 3 && words.every((word) => followUpWords.has(word));
 }
 
@@ -134,11 +139,13 @@ export function restrictToActivePointArticles(documents: KnowledgeDocument[]) {
   return documents.filter((document) => POINT_ARTICLE_TITLE_MATCHES.some((match) => titleMatches(document.title, match)));
 }
 
-function selectPointArticle(documents: KnowledgeDocument[], target: string | null) {
-  return target ? documents.filter((document) => titleMatches(document.title, target)) : restrictToActivePointArticles(documents);
+export function selectPointArticle(documents: KnowledgeDocument[], target: string | null) {
+  const selected = target ? documents.filter((document) => titleMatches(document.title, target)) : restrictToActivePointArticles(documents);
+  if (!target && new Set(selected.map((document) => document.id)).size > 1) return [];
+  return selected;
 }
 
-function sourceLine(content: string, label: string) {
+export function sourceLine(content: string, label: string) {
   return content.split("\n").find((line) => line.toLowerCase().startsWith(`${label.toLowerCase()}:`))?.slice(label.length + 1).trim().replace(/[.!?]+$/, "").trim() ?? "";
 }
 
@@ -153,7 +160,7 @@ function sourceLine(content: string, label: string) {
 // draft creation forever, since it could never be marked satisfied honestly.
 // ponytail: add attachment upload + Vision review, then reinstate a
 // screenshot requirement category here.
-function requiredContext(action: string, explicit: string) {
+export function requiredContext(action: string, explicit: string) {
   const value = `${explicit} ${action}`.toLowerCase();
   const hasOrder = /\b(nomor pesanan|nomor order|order id|id pesanan)\b/.test(value);
   const hasAccount = /\b(nomor akun|id akun|email akun)\b/.test(value);
@@ -161,6 +168,42 @@ function requiredContext(action: string, explicit: string) {
   if (hasOrder) return "nomor pesanan terkait";
   if (hasAccount) return "nomor atau email akun terkait";
   return null;
+}
+
+export function contextSatisfied(context: string | null, query: string) {
+  if (!context) return true;
+  const hasOrder = /\b\d{6,}\b/.test(query);
+  const hasLabeledAccount = /(?:\b(?:akun|account)(?:\s+(?:id|number|nomor))?\s*[:#-]?\s*\d{6,}|\b(?:id|nomor)\s+akun\s*[:#-]?\s*\d{6,}|\b\d{6,}\s+(?:akun|account)\b)/i.test(query);
+  const hasEmail = /[\w.+-]+@[\w.-]+\.[a-z]{2,}/i.test(query);
+  if (context === "nomor pesanan terkait") return hasOrder;
+  if (context === "nomor atau email akun terkait") return hasEmail || hasLabeledAccount;
+  if (context === "nomor akun atau nomor pesanan terkait") return hasOrder || hasEmail || hasLabeledAccount;
+  return false;
+}
+
+export function missingContextMessage(context: string | null, query: string) {
+  return context && !contextSatisfied(context, query) ? `Mohon minta ${context} sebelum kasus ini diverifikasi.` : null;
+}
+
+// Must match an actual "please send us the order/account number" request —
+// not just any reply containing a polite word like "mohon"/"silakan", which
+// could equally appear in a valid customer-facing sentence unrelated to
+// asking for an identifier (e.g. "Silakan cek email Anda untuk status...").
+function requestsContext(reply: string) {
+  return /\b(mohon|silakan|tolong)\b[^.!?]{0,80}\b(kirim|kirimkan|berikan|cantumkan|masukkan)\b[^.!?]{0,40}\b(nomor|akun|pesanan|order|email|id)\b/i.test(reply);
+}
+
+function suppliedContextReply(reply: string, context: string, query: string) {
+  if (!requestsContext(reply)) return `${reply}.`;
+  const label = context === "nomor pesanan terkait"
+    ? "nomor pesanan"
+    : context === "nomor atau email akun terkait"
+      ? "informasi akun"
+      : "informasi akun atau nomor pesanan";
+  const issue = /\b(saldo|poin|point)\b.*\b(0|nol|kosong)\b|\b(0|nol|kosong)\b.*\b(saldo|poin|point)\b/i.test(query)
+    ? "saldo poin yang tampil 0"
+    : "kasus ini";
+  return `Terima kasih, ${label} sudah kami terima. Tim kami akan memeriksa ${issue} dan memverifikasi data terkait.`;
 }
 
 export function pointAnswer(
@@ -208,18 +251,8 @@ export function pointAnswer(
   }
 
   const context = requiredContext(action, explicitContext);
-  const suppliedOrderNumber = /\b\d{6,}\b/.test(contextQuery);
-  const suppliedAccountIdentifier = /\b(?:\d{6,}|[\w.+-]+@[\w.-]+\.[a-z]{2,})\b/i.test(contextQuery);
-  const contextSatisfied = context === "nomor pesanan terkait"
-    ? suppliedOrderNumber
-    : context === "nomor atau email akun terkait"
-      ? suppliedAccountIdentifier
-      : context === "nomor akun atau nomor pesanan terkait"
-        ? suppliedAccountIdentifier
-        : false;
-  const missingContext = context && !contextSatisfied
-    ? [`Mohon minta ${context} sebelum kasus ini diverifikasi.`]
-    : [];
+  const missingContext = missingContextMessage(context, contextQuery);
+  const missingContextItems = missingContext ? [missingContext] : [];
   // Customer Action is an internal instruction to the agent, never a reply
   // to send verbatim. Without an explicit Customer Reply field, the app
   // must not invent customer-facing wording from it.
@@ -239,10 +272,10 @@ export function pointAnswer(
   return {
     intent: "Point support issue",
     summary,
-    missing_context: missingContext,
+    missing_context: missingContextItems,
     recommended_action: action,
     answer: `${summary}.`,
-    draft_reply: missingContext.length ? "" : `${reply}.`,
+    draft_reply: missingContextItems.length ? "" : suppliedContextReply(reply, context ?? "", contextQuery),
     citations,
     confidence: "high",
   };
@@ -263,8 +296,13 @@ export async function retrieveKnowledge(query: string, history: Array<{ role: "u
   const pointTopic = isPointTopic(combinedQuery);
   const own = await search(supabase, query);
   if (!pointTopic) {
-    if (own.length || !continuationSignal(query) || !priorUserText) return own;
-    return search(supabase, combinedQuery);
+    // A continuation's raw query ("itu gimana solusinya?") carries no topic
+    // keywords of its own — any hit it gets is incidental full-text noise, not
+    // a real match. Prefer the history-combined query; only fall back to the
+    // raw-query hit if the combined search truly finds nothing.
+    if (!continuation) return own;
+    const combined = await search(supabase, combinedQuery);
+    return combined.length ? combined : own;
   }
 
   // Search by the canonical article title as a bounded fallback. This handles
@@ -275,7 +313,7 @@ export async function retrieveKnowledge(query: string, history: Array<{ role: "u
   const targeted = selectPointArticle(targetResults, pointTarget);
   if (direct.length) return direct;
   if (targeted.length) return targeted;
-  if (!continuationSignal(query) || !priorUserText) return restrictToActivePointArticles(own);
+  if (!continuationSignal(query) || !priorUserText) return selectPointArticle(own, null);
 
   const priorSearch = await search(supabase, combinedQuery);
   return selectPointArticle(priorSearch, pointTarget);

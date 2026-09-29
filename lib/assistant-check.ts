@@ -1,7 +1,8 @@
 import assert from "assert/strict";
-import { generateNoAiAnswer, mapCitations, extractFirstJsonObject } from "./anthropic";
-import { POINT_ARTICLE_TITLE_MATCHES, continuationSignal, pointAnswer, pointArticleTitle, isPointTopic } from "./retrieval";
+import { fallback, generateNoAiAnswer, mapCitations, extractFirstJsonObject } from "./anthropic";
+import { POINT_ARTICLE_TITLE_MATCHES, continuationSignal, contextSatisfied, pointAnswer, pointArticleTitle, isPointTopic, selectPointArticle } from "./retrieval";
 import { activeContextForPrompt, trimHistoryToBudget, updateActiveContext } from "./context";
+import { readJson } from "./validation";
 import type { Citation, KnowledgeDocument } from "./assistant-types";
 
 const uuidPattern = "[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
@@ -69,6 +70,39 @@ if (process.argv[1]?.endsWith("assistant-check.ts")) {
   assert.equal(legacyPoint?.citations.length, 1);
   assert.equal(legacyPoint?.answer.includes("Kemungkinan penyebab"), false);
   assert.equal(legacyPoint?.answer.includes("Minta nomor pesanan"), false);
+
+  // Same legacy-row shape through the generic fallback() path (no Anthropic
+  // response) — Customer Action must never leak into draft_reply here either.
+  const legacyFallback = fallback("saldo poin saya bermasalah", legacyDocuments);
+  assert.equal(legacyFallback.draft_reply, "");
+  assert.equal(legacyFallback.draft_reply.includes("Minta nomor pesanan terkait untuk verifikasi"), false);
+  assert.equal(legacyFallback.knowledge_gap, true);
+
+  // Fallback must enforce Required Context too, not only Customer Reply.
+  const genericContextDocuments: KnowledgeDocument[] = [{
+    id: "generic-1",
+    title: "Order status",
+    url: "https://notion.so/generic-1",
+    content: "Customer Safe Summary: Status order perlu diverifikasi.\nCustomer Action: Verifikasi data order.\nRequired Context: Nomor order\nCustomer Reply: Kami akan memeriksa status order Anda",
+    category: null,
+    synced_at: "",
+  }];
+  const fallbackWithoutOrder = fallback("status order saya", genericContextDocuments);
+  assert.equal(fallbackWithoutOrder.draft_reply, "");
+  assert.ok(fallbackWithoutOrder.missing_context.some((item) => /nomor pesanan terkait/.test(item)));
+
+  // An unlabeled number may be an order number, but not an account identifier.
+  assert.equal(contextSatisfied("nomor pesanan terkait", "1234567890"), true);
+  assert.equal(contextSatisfied("nomor atau email akun terkait", "1234567890"), false);
+  assert.equal(contextSatisfied("nomor atau email akun terkait", "akun 1234567890"), true);
+  assert.equal(contextSatisfied("nomor atau email akun terkait", "customer@example.com"), true);
+
+  // Broad point retrieval must not silently pick one of multiple active articles.
+  const ambiguousPointDocuments = [
+    { ...legacyDocuments[0], id: "point-a", title: POINT_ARTICLE_TITLE_MATCHES[0] },
+    { ...legacyDocuments[0], id: "point-b", title: POINT_ARTICLE_TITLE_MATCHES[1] },
+  ];
+  assert.deepEqual(selectPointArticle(ambiguousPointDocuments, null), []);
 
   const pointDocuments: KnowledgeDocument[] = [{
     id: "point-1b",
@@ -144,6 +178,34 @@ if (process.argv[1]?.endsWith("assistant-check.ts")) {
   assert.equal(continuationSignal("Masih sama"), true);
   assert.equal(continuationSignal("itu"), true);
   assert.equal(continuationSignal("Cari SOP refund"), false);
+  // Regression: a label word ("nomor pesanannya") plus a bare identifier is
+  // still just supplying the identifier the agent asked for, not a new topic.
+  assert.equal(continuationSignal("Nomor pesanannya 1234567890"), true);
+  const nomorPesanannya = pointAnswer("Nomor pesanannya 1234567890", zeroBalanceDocuments, [{ role: "user", content: "Kenapa saldo poin 0?" }]);
+  assert.equal(nomorPesanannya?.missing_context.length, 0);
+  assert.notEqual(nomorPesanannya?.draft_reply, "");
+  assert.match(nomorPesanannya?.draft_reply ?? "", /nomor pesanan sudah kami terima/);
+  assert.match(nomorPesanannya?.draft_reply ?? "", /saldo poin yang tampil 0/);
+  assert.doesNotMatch(nomorPesanannya?.draft_reply ?? "", /mohon kirimkan nomor/i);
+
+  // Regression: a Customer Reply that uses "silakan"/"mohon" for something
+  // unrelated to requesting an identifier (e.g. pointing to an email) must be
+  // sent verbatim, not overridden by the generic acknowledgement template.
+  const unrelatedPoliteWordingDocuments: KnowledgeDocument[] = [{
+    id: "point-0b",
+    title: POINT_ARTICLE_TITLE_MATCHES[0],
+    url: "https://notion.so/point-0b",
+    content:
+      "Customer Safe Summary: Saldo poin dapat menampilkan 0 karena kendala sinkronisasi.\n" +
+      "Customer Action: Minta nomor pesanan terkait untuk verifikasi.\n" +
+      "Required Context: Nomor order\n" +
+      "Customer Reply: Terima kasih sudah menghubungi kami, silakan cek email Anda untuk melihat status pengajuan terkait saldo poin Anda",
+    category: "points",
+    synced_at: "",
+  }];
+  const unrelatedPoliteWording = pointAnswer("Nomor pesanannya 1234567890", unrelatedPoliteWordingDocuments, [{ role: "user", content: "Kenapa saldo poin 0?" }]);
+  assert.equal(unrelatedPoliteWording?.missing_context.length, 0);
+  assert.match(unrelatedPoliteWording?.draft_reply ?? "", /silakan cek email Anda untuk melihat status pengajuan/);
   const context = updateActiveContext("Poin saya jadi 0", {}, false, "2026-01-01T00:00:00Z");
   assert.match(activeContextForPrompt(context), /Poin saya jadi 0/);
   assert.equal(updateActiveContext("Pembayaran saya gagal", context, false).topic.value, "Pembayaran saya gagal");
@@ -216,6 +278,18 @@ if (process.argv[1]?.endsWith("assistant-check.ts")) {
     ],
   );
   assert.doesNotMatch(loginAfterPoints.answer, /akun yang terdampak, langkah yang sudah dicoba/i);
+
+  // JSON primitives and arrays must be rejected before routes dereference body fields.
+  void (async () => {
+    for (const value of [null, [], "text", 42, true]) {
+      await assert.rejects(() => readJson(new Request("http://localhost", {
+        method: "POST",
+        body: JSON.stringify(value),
+        headers: { "content-type": "application/json" },
+      })), /Invalid JSON body/);
+    }
+    console.log("readJson shape check passed");
+  })();
 
   console.log("assistant-check passed");
 }
