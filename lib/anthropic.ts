@@ -120,7 +120,42 @@ function hasExplicitIssueTopic(issue: string) {
   return /\b(login|akun|account|error|pesan|masalah|kendala|gagal|pembayaran|refund|order|pesanan)\b/i.test(issue);
 }
 
+function recentProjectNames(history: Array<{ role: "user" | "assistant"; content: string }>) {
+  const projects: string[] = [];
+  for (const message of history) {
+    if (message.role !== "user") continue;
+    const match = message.content.match(/\b(?:project|proyek)\s+([^:,\n]+?)\s*:/i);
+    const name = match?.[1]?.trim();
+    if (name && !projects.some((project) => project.toLowerCase() === name.toLowerCase())) projects.push(name);
+  }
+  return projects.slice(-3);
+}
+
+function mentionsProject(issue: string, projects: string[]) {
+  return projects.some((project) => new RegExp(`\\b(?:project|proyek)\\s+${project.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\$&")}\\b`, "i").test(issue));
+}
+
 export function fallback(issue: string, documents: KnowledgeDocument[], history: Array<{ role: "user" | "assistant"; content: string }> = []): GroundedAnswer {
+  const projects = recentProjectNames(history);
+  // A follow-up is ambiguous between projects either the usual way
+  // (continuationSignal: "itu", bare IDs, ...) or by asking a fresh-looking
+  // question ("gimana statusnya?") without naming any issue topic — that
+  // shape carries no keyword tying it to one project either.
+  const ambiguousFollowUp = continuationSignal(issue) || (isNewQuestion(issue) && !hasExplicitIssueTopic(issue));
+  if (projects.length >= 2 && ambiguousFollowUp && !mentionsProject(issue, projects)) {
+    const projectList = projects.map((project) => `Project ${project}`).join(", ").replace(/, ([^,]*)$/, " atau $1");
+    return {
+      intent: "Needs clarification",
+      summary: "The latest message is ambiguous between multiple recent projects.",
+      missing_context: [`Project belum jelas: ${projects.join(", ")}.`],
+      recommended_action: "Ask which project the customer means before preparing a reply.",
+      answer: `Maksudnya ${projectList}?`,
+      draft_reply: "",
+      citations: [],
+      confidence: "low",
+    };
+  }
+
   if (isClosingMessage(issue)) {
     return {
       intent: "Conversation closed",

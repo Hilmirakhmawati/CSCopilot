@@ -279,6 +279,38 @@ if (process.argv[1]?.endsWith("assistant-check.ts")) {
   );
   assert.doesNotMatch(loginAfterPoints.answer, /akun yang terdampak, langkah yang sudah dicoba/i);
 
+  // Regression: after distinct Project A and Project B turns, an ambiguous
+  // follow-up must ask which project rather than rank or mix both articles.
+  const projectDocuments: KnowledgeDocument[] = [
+    {
+      id: "project-a-login",
+      title: "Project A - Login",
+      url: "https://notion.so/project-a-login",
+      content: "Customer Safe Summary: Project A login gagal karena token expired.\nCustomer Reply: Silakan login kembali untuk memperbarui token Project A.",
+      category: "project-a",
+      synced_at: "",
+    },
+    {
+      id: "project-b-payment",
+      title: "Project B - Payment",
+      url: "https://notion.so/project-b-payment",
+      content: "Customer Safe Summary: Project B pembayaran gagal karena saldo tidak cukup.\nCustomer Reply: Mohon periksa saldo Project B sebelum membayar.",
+      category: "project-b",
+      synced_at: "",
+    },
+  ];
+  const projectHistory: Array<{ role: "user" | "assistant"; content: string }> = [];
+  const projectA = generateNoAiAnswer("Project A: aplikasi tidak bisa login, muncul error token expired", projectDocuments, projectHistory);
+  projectHistory.push({ role: "user", content: "Project A: aplikasi tidak bisa login, muncul error token expired" }, { role: "assistant", content: projectA.answer });
+  const projectB = generateNoAiAnswer("Project B: pembayaran saya gagal terus", projectDocuments, projectHistory);
+  projectHistory.push({ role: "user", content: "Project B: pembayaran saya gagal terus" }, { role: "assistant", content: projectB.answer });
+  const ambiguousProjectFollowUp = generateNoAiAnswer("gimana statusnya?", projectDocuments, projectHistory);
+  assert.match(projectA.draft_reply, /Project A|login/i);
+  assert.match(projectB.draft_reply, /Project B|saldo/i);
+  assert.match(ambiguousProjectFollowUp.answer, /Project A.*Project B|Project B.*Project A/i);
+  assert.equal(ambiguousProjectFollowUp.draft_reply, "");
+  assert.equal(ambiguousProjectFollowUp.confidence, "low");
+
   // JSON primitives and arrays must be rejected before routes dereference body fields.
   void (async () => {
     for (const value of [null, [], "text", 42, true]) {
