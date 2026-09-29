@@ -1,5 +1,5 @@
 import assert from "assert/strict";
-import { mapCitations, extractFirstJsonObject } from "./anthropic";
+import { generateNoAiAnswer, mapCitations, extractFirstJsonObject } from "./anthropic";
 import { POINT_ARTICLE_TITLE_MATCHES, continuationSignal, pointAnswer, pointArticleTitle, isPointTopic } from "./retrieval";
 import { activeContextForPrompt, trimHistoryToBudget, updateActiveContext } from "./context";
 import type { Citation, KnowledgeDocument } from "./assistant-types";
@@ -157,6 +157,65 @@ if (process.argv[1]?.endsWith("assistant-check.ts")) {
     enforceMissingContextInvariant({ missing_context: [], draft_reply: "Terima kasih..." }),
     { missing_context: [], draft_reply: "Terima kasih..." },
   );
+
+  const clarificationFollowUp = generateNoAiAnswer(
+    'pesannya "invalid token". langkah yg sudah dicoba yaitu connect wifi ulang lalu coba login lagi. dan sama saja',
+    [],
+    [
+      { role: "user", content: 'Project Inwan: aplikasi tidak bisa login sejak kemarin, muncul error "invalid token".' },
+      { role: "assistant", content: "Belum ada knowledge perusahaan yang cukup relevan untuk menjawab issue ini. Bisa tolong kirimkan pesan error yang muncul, akun yang terdampak, dan langkah yang sudah dicoba?" },
+    ],
+  );
+  assert.equal(clarificationFollowUp.missing_context.length, 1);
+  assert.match(clarificationFollowUp.missing_context[0], /akun/i);
+  assert.doesNotMatch(clarificationFollowUp.missing_context[0], /error|langkah|dicoba/i);
+  assert.doesNotMatch(clarificationFollowUp.answer, /pesan error|langkah yang sudah dicoba/i);
+
+  const newQuestionAfterClarification = generateNoAiAnswer(
+    "gimana caranya verifikasi manual?",
+    [],
+    [
+      { role: "user", content: 'Project A: aplikasi tidak bisa login sejak kemarin, muncul error "invalid token"' },
+      { role: "assistant", content: "Belum ada knowledge perusahaan yang cukup relevan untuk menjawab issue ini. Bisa tolong kirimkan akun yang terdampak?" },
+      { role: "user", content: "akun testertimedoor@gmail.com" },
+      { role: "assistant", content: "Belum ada knowledge perusahaan yang cukup relevan untuk menjawab issue ini. Detail yang diberikan sudah tercatat; kasus ini perlu diverifikasi secara manual oleh tim Customer Support." },
+    ],
+  );
+  assert.match(newQuestionAfterClarification.answer, /prosedur verifikasi manual|knowledge/i);
+  assert.doesNotMatch(newQuestionAfterClarification.answer, /detail yang diberikan sudah tercatat/i);
+
+  const pointsAmbiguity = generateNoAiAnswer(
+    "yaelah, aku ga ngerti",
+    [],
+    [
+      { role: "user", content: 'Project A: aplikasi tidak bisa login sejak kemarin, muncul error "invalid token"' },
+      { role: "assistant", content: "Belum ada knowledge perusahaan yang cukup relevan untuk menjawab issue ini. Detail yang diberikan sudah tercatat; kasus ini perlu diverifikasi secara manual oleh tim Customer Support." },
+      { role: "user", content: "gimana cara verifikasi manual?" },
+      { role: "assistant", content: "Belum ada knowledge perusahaan yang menjelaskan pertanyaan ini. Kasus ini perlu diverifikasi oleh tim Customer Support." },
+      { role: "user", content: "oke. lalu kenapa saldo poin bisa 0?" },
+      { role: "assistant", content: "Saldo poin dapat menampilkan 0 karena kendala sinkronisasi." },
+      { role: "user", content: "Kenapa riwayat poin beda?" },
+      { role: "assistant", content: "Riwayat poin dapat berbeda dari riwayat pesanan." },
+    ],
+  );
+  assert.match(pointsAmbiguity.answer, /poin|jelas|bagian/i);
+  assert.doesNotMatch(pointsAmbiguity.answer, /akun yang terdampak|langkah yang sudah dicoba/i);
+
+  const loginAfterPoints = generateNoAiAnswer(
+    "sudah coba login ulang aja sih",
+    [],
+    [
+      { role: "user", content: 'Project A: aplikasi tidak bisa login sejak kemarin, muncul error "invalid token"' },
+      { role: "assistant", content: "Belum ada knowledge perusahaan yang cukup relevan untuk menjawab issue ini. Detail yang diberikan sudah tercatat; kasus ini perlu diverifikasi secara manual oleh tim Customer Support." },
+      { role: "user", content: "oke. lalu kenapa saldo poin bisa 0?" },
+      { role: "assistant", content: "Saldo poin dapat menampilkan 0 karena kendala sinkronisasi." },
+      { role: "user", content: "Kenapa riwayat poin beda?" },
+      { role: "assistant", content: "Riwayat poin dapat berbeda dari riwayat pesanan." },
+      { role: "user", content: "yaelah, aku ga ngerti" },
+      { role: "assistant", content: "Bagian mana yang masih kurang jelas terkait saldo atau riwayat poin?" },
+    ],
+  );
+  assert.doesNotMatch(loginAfterPoints.answer, /akun yang terdampak, langkah yang sudah dicoba/i);
 
   console.log("assistant-check passed");
 }

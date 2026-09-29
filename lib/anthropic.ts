@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { GroundedAnswer, KnowledgeDocument } from "./assistant-types";
-import { continuationSignal, greetingAnswer, isClosingMessage, isGreetingOnly, pointAnswer } from "./retrieval";
+import { continuationSignal, greetingAnswer, isClosingMessage, isGreetingOnly, isPointTopic, pointAnswer } from "./retrieval";
 import { withRetry } from "./retry";
 import { enforceMissingContextInvariant } from "./assistant-check";
 
@@ -93,6 +93,33 @@ export function mapCitations(citations: ModelCitation[], documents: KnowledgeDoc
     .filter((citation): citation is GroundedAnswer["citations"][number] => Boolean(citation));
 }
 
+function suppliedClarificationDetails(issue: string, history: Array<{ role: "user" | "assistant"; content: string }>) {
+  const userMessages = history.filter((message) => message.role === "user");
+  // A Points-topic message marks a topic switch away from whatever issue
+  // (e.g. login) was being clarified before it — details supplied before
+  // that switch no longer apply to the current checklist.
+  const lastTopicShiftIndex = userMessages.reduce((last, message, index) => (isPointTopic(message.content) ? index : last), -1);
+  const relevantHistory = userMessages.slice(lastTopicShiftIndex + 1);
+  const customerText = [...relevantHistory.map((message) => message.content), issue].join(" ");
+  return {
+    error: /["“][^"”]+["”]/.test(customerText) || /\b(error|pesan(?:nya)?|message)\b/i.test(customerText),
+    steps: /\b(langkah|sudah\s+dicoba|udah\s+dicoba|dicoba|troubleshoot|wifi|login\s+lagi)\b/i.test(customerText),
+    account: /\b(?:akun|account)\b.{0,40}(?:saya|ini|terdampak|user)\b|\b[\w.+-]+@[\w.-]+\.[a-z]{2,}\b|\b\d{6,}\b/i.test(customerText),
+  };
+}
+
+function isNewQuestion(issue: string) {
+  return /[?]\s*$|^(apa|apakah|bagaimana|gimana|kenapa|mengapa|bisakah|boleh|cara)\b/i.test(issue.trim());
+}
+
+function latestPointTopic(history: Array<{ role: "user" | "assistant"; content: string }>) {
+  return [...history].reverse().find((message) => message.role === "user" && isPointTopic(message.content));
+}
+
+function hasExplicitIssueTopic(issue: string) {
+  return /\b(login|akun|account|error|pesan|masalah|kendala|gagal|pembayaran|refund|order|pesanan)\b/i.test(issue);
+}
+
 function fallback(issue: string, documents: KnowledgeDocument[], history: Array<{ role: "user" | "assistant"; content: string }> = []): GroundedAnswer {
   if (isClosingMessage(issue)) {
     return {
@@ -121,12 +148,44 @@ function fallback(issue: string, documents: KnowledgeDocument[], history: Array<
     .map(({ document }) => document);
 
   if (!ranked.length) {
+    // The account/error/steps checklist belongs to whatever issue is
+    // currently active. If the conversation has since moved to a different
+    // topic (e.g. Points) and the latest message is ambiguous rather than a
+    // fresh question about that old issue, reviving the old checklist would
+    // misdirect the customer — ask about the CURRENT topic instead.
+    const recentTopic = latestPointTopic(history);
+    const topicShifted = recentTopic && !isPointTopic(issue) && !hasExplicitIssueTopic(issue);
+    if (topicShifted) {
+      const question = "Boleh diperjelas, bagian mana dari topik poin sebelumnya yang masih kurang jelas, atau apakah ini pertanyaan baru?";
+      return {
+        intent: "Needs clarification",
+        summary: "The latest message is ambiguous relative to the current topic.",
+        missing_context: ["Klarifikasi diperlukan terkait topik yang sedang dibahas."],
+        recommended_action: "Ask the customer to clarify relative to the current topic before replying.",
+        answer: question,
+        draft_reply: "",
+        citations: [],
+        confidence: "low",
+      };
+    }
+
+    const supplied = suppliedClarificationDetails(issue, history);
+    const missing = [
+      !supplied.account && "akun yang terdampak",
+      !supplied.error && "pesan error yang muncul",
+      !supplied.steps && "langkah yang sudah dicoba",
+    ].filter((item): item is string => Boolean(item));
+    const question = missing.length
+      ? `Belum ada knowledge perusahaan yang cukup relevan untuk menjawab issue ini. Bisa tolong kirimkan ${missing.join(", ")}?`
+      : isNewQuestion(issue)
+        ? "Belum ada knowledge perusahaan yang menjelaskan pertanyaan ini. Kasus ini perlu diverifikasi oleh tim Customer Support."
+        : "Belum ada knowledge perusahaan yang cukup relevan untuk menjawab issue ini. Detail yang diberikan sudah tercatat; kasus ini perlu diverifikasi secara manual oleh tim Customer Support.";
     return {
       intent: "Needs clarification",
       summary: "No matching company knowledge was found.",
-      missing_context: ["Relevant company documentation is unavailable. Confirm the account, error message, and steps already tried."],
+      missing_context: missing.length ? [`Relevant company documentation is unavailable. Confirm ${missing.join(", ")}.`] : [],
       recommended_action: "Collect the missing details and verify the case manually before replying.",
-      answer: "Belum ada knowledge perusahaan yang cukup relevan untuk menjawab issue ini. Bisa tolong kirimkan pesan error yang muncul, akun yang terdampak, dan langkah yang sudah dicoba?",
+      answer: question,
       draft_reply: "",
       citations: [],
       confidence: "low",
