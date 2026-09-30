@@ -1,5 +1,6 @@
 import type { GroundedAnswer, KnowledgeDocument } from "./assistant-types";
 import { getSupabaseAdmin } from "./db";
+import { filterDocumentsByProject, resolveProjectScope } from "./project-scope";
 
 // Short questions or ones that reference something already said ("itu", "nya")
 // carry no keywords of their own — only those get to borrow prior context.
@@ -309,27 +310,30 @@ export async function retrieveKnowledge(query: string, history: Array<{ role: "u
   const combinedQuery = continuation ? `${priorUserText} ${query}` : query;
   const pointTarget = pointArticleTitle(combinedQuery);
   const pointTopic = isPointTopic(combinedQuery);
-  const own = await search(supabase, query);
+  const scope = resolveProjectScope(query, history);
+  if (scope.ambiguous) return [];
+  const scopeResults = (documents: KnowledgeDocument[]) => filterDocumentsByProject(documents, scope.project);
+  const own = scopeResults(await search(supabase, query));
   if (!pointTopic) {
     // A continuation's raw query ("itu gimana solusinya?") carries no topic
     // keywords of its own — any hit it gets is incidental full-text noise, not
     // a real match. Prefer the history-combined query; only fall back to the
     // raw-query hit if the combined search truly finds nothing.
     if (!continuation) return own;
-    const combined = await search(supabase, combinedQuery);
+    const combined = scopeResults(await search(supabase, combinedQuery));
     return combined.length ? combined : own;
   }
 
   // Search by the canonical article title as a bounded fallback. This handles
   // Indonesian customer wording even when PostgreSQL full-text ranking cannot
   // match it to the English Notion title.
-  const targetResults = pointTarget ? await search(supabase, pointTarget) : [];
+  const targetResults = pointTarget ? scopeResults(await search(supabase, pointTarget)) : [];
   const direct = selectPointArticle(own, pointTarget);
   const targeted = selectPointArticle(targetResults, pointTarget);
   if (direct.length) return direct;
   if (targeted.length) return targeted;
   if (!continuationSignal(query) || !priorUserText) return selectPointArticle(own, null);
 
-  const priorSearch = await search(supabase, combinedQuery);
+  const priorSearch = scopeResults(await search(supabase, combinedQuery));
   return selectPointArticle(priorSearch, pointTarget);
 }

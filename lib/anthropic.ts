@@ -3,6 +3,7 @@ import type { GroundedAnswer, KnowledgeDocument } from "./assistant-types";
 import { continuationSignal, greetingAnswer, isClosingMessage, isGreetingOnly, isPointTopic, isSarcasticOrDismissive, missingContextMessage, pointAnswer, requiredContext, sourceLine } from "./retrieval";
 import { withRetry } from "./retry";
 import { enforceMissingContextInvariant } from "./assistant-check";
+import { filterDocumentsByProject, resolveProjectScope } from "./project-scope";
 
 const DEFAULT_MODEL = "claude-sonnet-5";
 
@@ -152,7 +153,21 @@ function isTimelineQuestion(issue: string) {
 
 export function fallback(issue: string, documents: KnowledgeDocument[], history: Array<{ role: "user" | "assistant"; content: string }> = []): GroundedAnswer {
   const projects = recentProjectNames(history);
-  const scopedDocuments = projectScopedDocuments(issue, documents);
+  const scope = resolveProjectScope(issue, history);
+  const scopedDocuments = scope.project ? filterDocumentsByProject(documents, scope.project) : projectScopedDocuments(issue, documents);
+  if (scope.ambiguous) {
+    const projectList = scope.projects.map((project) => `Project ${project}`).join(", ").replace(/, ([^,]*)$/, " atau $1");
+    return {
+      intent: "Needs clarification",
+      summary: "The latest message is ambiguous between multiple recent projects.",
+      missing_context: [`Project belum jelas: ${scope.projects.join(", ")}.`],
+      recommended_action: "Ask which project the customer means before preparing a reply.",
+      answer: `Maksudnya ${projectList}?`,
+      draft_reply: "",
+      citations: [],
+      confidence: "low",
+    };
+  }
   // A follow-up is ambiguous between projects either the usual way
   // (continuationSignal: "itu", bare IDs, ...) or by asking a fresh-looking
   // question ("gimana statusnya?") without naming any issue topic — that
@@ -321,10 +336,13 @@ Return JSON matching the requested schema.`;
 
 export async function generateGroundedAnswer(issue: string, documents: KnowledgeDocument[], history: Array<{ role: "user" | "assistant"; content: string }> = [], contextSummary = ""): Promise<GroundedAnswer> {
   if (isGreetingOnly(issue)) return greetingAnswer(issue, history);
-  const deterministicPointAnswer = pointAnswer(issue, documents, history);
+  const scope = resolveProjectScope(issue, history);
+  if (scope.ambiguous) return fallback(issue, documents, history);
+  const scopedDocuments = scope.project ? filterDocumentsByProject(documents, scope.project) : documents;
+  const deterministicPointAnswer = pointAnswer(issue, scopedDocuments, history);
   if (deterministicPointAnswer) return deterministicPointAnswer;
-  if (!configuredApiKey() || process.env.CSCOPILOT_NO_AI === "1") return fallback(issue, documents, history);
-  const context = documents.map((doc, index) => `REFERENCE ${index + 1}\nCONTENT:\n${doc.content}`).join("\n\n");
+  if (!configuredApiKey() || process.env.CSCOPILOT_NO_AI === "1") return fallback(issue, scopedDocuments, history);
+  const context = scopedDocuments.map((doc, index) => `REFERENCE ${index + 1}\nCONTENT:\n${doc.content}`).join("\n\n");
   let response;
   try {
     response = await withRetry(() => client().messages.create({
@@ -364,7 +382,7 @@ Do not invent facts not supported by the knowledge context or conversation.`
 ],
     } as never));
   } catch (error) {
-    if (isUnavailableAnthropicError(error)) return fallback(issue, documents, history);
+    if (isUnavailableAnthropicError(error)) return fallback(issue, scopedDocuments, history);
     throw error;
   }
   if ((response as { stop_reason?: string }).stop_reason === "refusal") throw new Error("Claude refused this request");
@@ -379,13 +397,13 @@ Do not invent facts not supported by the knowledge context or conversation.`
     // A malformed model response must not break the support workflow. The
     // deterministic answer still uses only the retrieved customer-safe fields.
     console.warn("Claude returned non-JSON output; using grounded fallback");
-    return fallback(issue, documents, history);
+    return fallback(issue, scopedDocuments, history);
   }
   if (!isModelAnswer(parsed)) {
     console.warn("Claude returned an unexpected schema; using grounded fallback");
-    return fallback(issue, documents, history);
+    return fallback(issue, scopedDocuments, history);
   }
-  return enforceMissingContextInvariant({ ...parsed, citations: mapCitations(parsed.citations, documents) });
+  return enforceMissingContextInvariant({ ...parsed, citations: mapCitations(parsed.citations, scopedDocuments) });
 }
 
 export { fallback as generateNoAiAnswer };

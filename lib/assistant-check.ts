@@ -312,6 +312,70 @@ if (process.argv[1]?.endsWith("assistant-check.ts")) {
   assert.equal(ambiguousProjectFollowUp.draft_reply, "");
   assert.equal(ambiguousProjectFollowUp.confidence, "low");
 
+  const projectALogin: KnowledgeDocument = {
+    id: "project-a-login-isolation",
+    title: "Project A - Login",
+    url: "https://notion.so/project-a-login-isolation",
+    content: "Customer Safe Summary: Project A login gagal karena account locked.\nCustomer Reply: Silakan buka kunci akun Project A.",
+    category: "project-a",
+    synced_at: "",
+  };
+  const projectBLogin: KnowledgeDocument = {
+    id: "project-b-login-isolation",
+    title: "Project B - Login",
+    url: "https://notion.so/project-b-login-isolation",
+    content: "Customer Safe Summary: Project B login gagal karena session expired.\nCustomer Reply: Silakan login kembali ke Project B.",
+    category: "project-b",
+    synced_at: "",
+  };
+  const projectBQuestion = generateNoAiAnswer(
+    "Sekarang untuk Project B, user juga tidak bisa login tapi errornya session expired.",
+    [projectALogin, projectBLogin],
+  );
+  assert.match(projectBQuestion.draft_reply, /session expired|Project B/i);
+  assert.equal(projectBQuestion.citations.some((citation) => /Project A/i.test(citation.title)), false);
+
+  const noProjectAKnowledge = generateNoAiAnswer(
+    "Project A: kenapa fitur voice call tidak muncul?",
+    [projectBLogin],
+  );
+  assert.equal(noProjectAKnowledge.citations.length, 0);
+  assert.equal(noProjectAKnowledge.draft_reply, "");
+  assert.equal(noProjectAKnowledge.confidence, "low");
+
+  const projectAExport: KnowledgeDocument = {
+    id: "project-a-export",
+    title: "Project A - Export",
+    url: "https://notion.so/project-a-export",
+    content: "Customer Safe Summary: Export Project A gagal setelah sinkronisasi data.\nCustomer Reply: Kami akan memeriksa error export Project A.",
+    category: "project-a",
+    synced_at: "",
+  };
+  const inheritedProject = generateNoAiAnswer(
+    "Apakah ada solusi untuk issue ini?",
+    [projectAExport],
+    [
+      { role: "user", content: "Kami sedang investigasi masalah di Project A terkait sinkronisasi data." },
+      { role: "assistant", content: "Kami sedang memeriksa kasusnya." },
+      { role: "user", content: "Datanya sudah dicek, error muncul di modul export." },
+    ],
+  );
+  assert.match(inheritedProject.draft_reply, /export|Project A/i);
+
+  const naturalAmbiguousProject = generateNoAiAnswer(
+    "Bisa cek status untuk ini?",
+    [projectALogin, projectBLogin],
+    [
+      { role: "user", content: "Project A ada kendala di modul pembayaran." },
+      { role: "assistant", content: "Kami sedang memeriksa Project A." },
+      { role: "user", content: "Project B juga ada kendala di modul pembayaran, beda kasus." },
+      { role: "assistant", content: "Kami sedang memeriksa Project B." },
+    ],
+  );
+  assert.match(naturalAmbiguousProject.answer, /Project A.*Project B|Project B.*Project A/i);
+  assert.equal(naturalAmbiguousProject.draft_reply, "");
+  assert.equal(naturalAmbiguousProject.citations.length, 0);
+
   const scopeHistory = [
     { role: "user" as const, content: "Kami sedang investigasi masalah di Project A terkait sinkronisasi data." },
     { role: "assistant" as const, content: "Kami sedang memeriksa kasusnya." },
