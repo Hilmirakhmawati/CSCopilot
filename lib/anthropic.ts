@@ -131,12 +131,28 @@ function recentProjectNames(history: Array<{ role: "user" | "assistant"; content
   return projects.slice(-3);
 }
 
+function explicitProjectName(issue: string) {
+  return issue.match(/\b(?:project|proyek)\s+([^:,\n]+?)(?=\s*[:,-]|\s+(?:kenapa|mengapa|bagaimana|gimana|tidak|ada|juga|untuk)\b|$)/i)?.[1]?.trim();
+}
+
 function mentionsProject(issue: string, projects: string[]) {
   return projects.some((project) => new RegExp(`\\b(?:project|proyek)\\s+${project.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\$&")}\\b`, "i").test(issue));
 }
 
+function projectScopedDocuments(issue: string, documents: KnowledgeDocument[]) {
+  const project = explicitProjectName(issue);
+  if (!project) return documents;
+  const marker = new RegExp(`\\b(?:project|proyek)\\s+${project.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\$&")}\\b`, "i");
+  return documents.filter((document) => marker.test(`${document.category ?? ""} ${document.title} ${document.content}`));
+}
+
+function isTimelineQuestion(issue: string) {
+  return /\b(berapa lama|kapan|estimasi waktu|timeline|durasi)\b/i.test(issue);
+}
+
 export function fallback(issue: string, documents: KnowledgeDocument[], history: Array<{ role: "user" | "assistant"; content: string }> = []): GroundedAnswer {
   const projects = recentProjectNames(history);
+  const scopedDocuments = projectScopedDocuments(issue, documents);
   // A follow-up is ambiguous between projects either the usual way
   // (continuationSignal: "itu", bare IDs, ...) or by asking a fresh-looking
   // question ("gimana statusnya?") without naming any issue topic — that
@@ -186,8 +202,20 @@ export function fallback(issue: string, documents: KnowledgeDocument[], history:
       confidence: "low",
     };
   }
+  if (isTimelineQuestion(issue)) {
+    return {
+      intent: "Needs clarification",
+      summary: "The customer asks for a timeline that is not provided by the available knowledge.",
+      missing_context: ["Estimasi waktu penyelesaian belum tersedia di knowledge perusahaan."],
+      recommended_action: "Confirm the timeline with the responsible team before replying.",
+      answer: "Estimasi waktu penyelesaian belum tersedia di knowledge perusahaan dan perlu dikonfirmasi ke tim terkait.",
+      draft_reply: "",
+      citations: [],
+      confidence: "low",
+    };
+  }
   const contextWords = words(contextText);
-  const ranked = documents
+  const ranked = scopedDocuments
     .map((document, index) => ({ document, index, score: [...words(`${document.title} ${document.content}`)].filter((word) => contextWords.has(word)).length }))
     .sort((a, b) => b.score - a.score || a.index - b.index)
     .filter(({ score }) => score > 0)

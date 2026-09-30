@@ -311,6 +311,35 @@ if (process.argv[1]?.endsWith("assistant-check.ts")) {
   assert.equal(ambiguousProjectFollowUp.draft_reply, "");
   assert.equal(ambiguousProjectFollowUp.confidence, "low");
 
+  // A follow-up asking for timing must answer that intent, not repeat the
+  // previous issue summary when the source has no SLA/timeline.
+  const timelineFollowUp = generateNoAiAnswer(
+    "Berapa lama biasanya ini bisa selesai?",
+    projectDocuments,
+    [
+      { role: "user", content: "Kami ada masalah login di Project A." },
+      { role: "assistant", content: "Kami akan membantu memeriksa kendala login Project A." },
+    ],
+  );
+  assert.match(timelineFollowUp.answer, /estimasi|waktu|timeline/i);
+  assert.equal(timelineFollowUp.draft_reply, "");
+  assert.equal(timelineFollowUp.confidence, "low");
+
+  // An explicit Project B question must not cite a Project A document merely
+  // because both documents share a generic issue word such as "gagal".
+  const switchedProject = generateNoAiAnswer(
+    "Ganti topik — untuk Project B, kenapa laporan bulanan tidak muncul di dashboard?",
+    [
+      ...projectDocuments,
+      { id: "project-a-payment", title: "Project A - Payment", url: "https://notion.so/project-a-payment", content: "Customer Safe Summary: Project A pembayaran gagal di checkout.\nCustomer Reply: Kami akan memeriksa pembayaran Project A.", category: "project-a", synced_at: "" },
+      { id: "project-b-report", title: "Project B - Report", url: "https://notion.so/project-b-report", content: "Customer Safe Summary: Project B laporan bulanan tidak muncul di dashboard.\nCustomer Reply: Kami akan memeriksa laporan bulanan Project B.", category: "project-b", synced_at: "" },
+    ],
+    [{ role: "user", content: "Project A: pembayaran customer gagal terus di checkout." }],
+  );
+  assert.ok(switchedProject.citations.length > 0);
+  assert.ok(switchedProject.citations.every((citation) => /project\s+b/i.test(citation.title)));
+  assert.equal(switchedProject.citations.some((citation) => /project\s+a/i.test(citation.title)), false);
+
   // JSON primitives and arrays must be rejected before routes dereference body fields.
   void (async () => {
     for (const value of [null, [], "text", 42, true]) {
