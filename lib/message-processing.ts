@@ -77,8 +77,9 @@ export async function processConversationMessage(
   userId: string,
   issue: string,
   idempotencyKey?: string,
+  currentDraft = "",
 ): Promise<MessageResult> {
-  return withConversationLock(conversationId, () => processConversationMessageUnlocked(db, conversationId, userId, issue, idempotencyKey));
+  return withConversationLock(conversationId, () => processConversationMessageUnlocked(db, conversationId, userId, issue, idempotencyKey, currentDraft));
 }
 
 async function processConversationMessageUnlocked(
@@ -87,6 +88,7 @@ async function processConversationMessageUnlocked(
   userId: string,
   issue: string,
   idempotencyKey?: string,
+  currentDraft = "",
 ): Promise<MessageResult> {
   const startedAt = Date.now();
   // Migration 005 adds the context columns. Keep the context feature optional
@@ -209,7 +211,7 @@ async function processConversationMessageUnlocked(
     }
     const answer = sanitizeAnswer(greeting
       ? greetingAnswer(issue, boundedHistory)
-      : await generateGroundedAnswer(issue, documents, boundedHistory, contextText));
+      : await generateGroundedAnswer(issue, documents, boundedHistory, contextText, currentDraft));
     answer.citations = validateCitations(
       answer.citations ?? [],
       new Set(documents.map((document) => document.id)),

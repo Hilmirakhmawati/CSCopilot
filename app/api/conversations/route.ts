@@ -16,6 +16,7 @@ export async function POST(request: Request) {
     // no conversation row behind (previously the insert ran first, so an
     // invalid content shape orphaned an empty conversation).
     const content = body.content !== undefined ? readText(body.content) : undefined;
+    const currentDraft = body.current_draft === undefined ? "" : readText(body.current_draft, "current_draft", 12000);
     const rawKey = request.headers.get("Idempotency-Key") || undefined;
     const idempotencyKey = rawKey && (await idempotencyReady(db)) ? rawKey : undefined;
     if (idempotencyKey) {
@@ -23,7 +24,7 @@ export async function POST(request: Request) {
       if (existing.error) throw existing.error;
       if (existing.data) {
         if (content === undefined) return Response.json(existing.data, { status: 201 });
-        const result = await processConversationMessage(db, existing.data.id, user.id, content, idempotencyKey);
+        const result = await processConversationMessage(db, existing.data.id, user.id, content, idempotencyKey, currentDraft);
         return Response.json({ conversation: existing.data, ...result }, { status: 201 });
       }
     }
@@ -35,13 +36,13 @@ export async function POST(request: Request) {
         const existing = await db.from("conversations").select("id,title,status,created_at").eq("created_by", user.id).eq("idempotency_key", idempotencyKey).single();
         if (existing.error) throw existing.error;
         if (content === undefined) return Response.json(existing.data, { status: 201 });
-        const result = await processConversationMessage(db, existing.data.id, user.id, content, idempotencyKey);
+        const result = await processConversationMessage(db, existing.data.id, user.id, content, idempotencyKey, currentDraft);
         return Response.json({ conversation: existing.data, ...result }, { status: 201 });
       }
       throw error;
     }
     if (content !== undefined) {
-      const result = await processConversationMessage(db, data.id, user.id, content, idempotencyKey);
+      const result = await processConversationMessage(db, data.id, user.id, content, idempotencyKey, currentDraft);
       return Response.json({ conversation: data, ...result }, { status: 201 });
     }
     return Response.json(data, { status: 201 });

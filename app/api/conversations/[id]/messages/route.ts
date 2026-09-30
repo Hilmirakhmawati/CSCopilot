@@ -25,9 +25,11 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const user = await requireUser(request);
     enforceRateLimit(requestKey(request, user.id));
     const { id } = await params;
-    const issue = readText((await readJson(request)).content);
+    const body = await readJson(request);
+    const issue = readText(body.content);
+    const currentDraft = body.current_draft === undefined ? "" : readText(body.current_draft, "current_draft", 12000);
     const idempotencyKey = request.headers.get("Idempotency-Key") || undefined;
-    const result = await processConversationMessage(getSupabaseAdmin(), id, user.id, issue, idempotencyKey);
+    const result = await processConversationMessage(getSupabaseAdmin(), id, user.id, issue, idempotencyKey, currentDraft);
     return Response.json(result);
   } catch (error) { return errorResponse(error); }
 }

@@ -13,7 +13,7 @@ const projectPattern = /\b(?:project|proyek)\s*[-:]?\s*([a-z0-9][a-z0-9_-]*(?:\s
 const ambiguousFollowUpPattern = /\b(ini|itu|yang tadi|sebelumnya|status|berapa lama|kapan|siapa)\b|^(?:bisa|boleh|apakah|gimana|bagaimana|kenapa)\b/i;
 const aliasIssuePattern = /\b(?:aplikasi|app|masalah|kendala|error|login|pembayaran|payment|export|laporan|dashboard|poin|point|gagal|tidak\s+bisa)\b/i;
 const leadingAliasPattern = /^([a-z][a-z0-9_-]{1,})(?=\s+)/i;
-const reservedAliasWords = new Set(["saldo", "saya", "kami", "customer", "user", "akun", "account", "kenapa", "bagaimana", "gimana", "tolong", "mohon", "ini", "itu", "datanya", "katanya", "sudah", "tetap", "passwordnya", "tapi", "yang"]);
+const reservedAliasWords = new Set(["saldo", "saya", "kami", "customer", "user", "akun", "account", "cara", "cek", "kenapa", "mengapa", "bagaimana", "gimana", "apa", "apakah", "bisa", "boleh", "tolong", "mohon", "ini", "itu", "datanya", "katanya", "sudah", "tetap", "passwordnya", "tapi", "yang"]);
 
 export function projectNames(value: string) {
   const explicit = [...value.matchAll(projectPattern)].map((match) => match[1].trim());
@@ -68,7 +68,7 @@ export function resolveProjectScope(query: string, history: ChatHistory): Projec
   const projects = uniqueProjects([...historyProjects, ...explicitProjects]);
   if (establishedProject) {
     return {
-      project: latestEstablishedProject ?? establishedProject,
+      project: establishedProject,
       projects,
       explicit: true,
       ambiguous: false,
@@ -90,5 +90,9 @@ export function resolveProjectScope(query: string, history: ChatHistory): Projec
 export function filterDocumentsByProject(documents: KnowledgeDocument[], project: string | null) {
   if (!project) return documents;
   const marker = projectMarker(project);
-  return documents.filter((document) => marker.test(`${document.category ?? ""} ${document.title} ${document.content}`));
+  const anyProjectMarker = /\b(?:project|proyek)[\s_-]*[a-z0-9][a-z0-9_-]*/i;
+  return documents.filter((document) => {
+    const text = `${document.category ?? ""} ${document.title} ${document.content}`;
+    return marker.test(text) || !anyProjectMarker.test(text);
+  });
 }

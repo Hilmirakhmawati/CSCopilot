@@ -1,10 +1,10 @@
 import assert from "assert/strict";
 import { fallback, generateNoAiAnswer, mapCitations, extractFirstJsonObject } from "./anthropic";
-import { POINT_ARTICLE_TITLE_MATCHES, continuationSignal, contextSatisfied, isSarcasticOrDismissive, pointAnswer, pointArticleTitle, isPointTopic, selectPointArticle } from "./retrieval";
+import { POINT_ARTICLE_TITLE_MATCHES, classifyConversationIntent, continuationSignal, contextSatisfied, isClosingMessage, isCustomerContextRequest, isFeedbackMessage, isSarcasticOrDismissive, pointAnswer, pointArticleTitle, isPointTopic, selectPointArticle } from "./retrieval";
 import { activeContextForPrompt, trimHistoryToBudget, updateActiveContext } from "./context";
 import { readJson } from "./validation";
 import type { Citation, KnowledgeDocument } from "./assistant-types";
-import { filterDocumentsByProject, resolveProjectScope } from "./project-scope";
+import { filterDocumentsByProject, projectNames, resolveProjectScope } from "./project-scope";
 import { enforceMissingContextInvariant, hasCustomerFacingSourceLeak, sanitizeAnswer } from "./answer-safety";
 
 export { enforceMissingContextInvariant, hasCustomerFacingSourceLeak, sanitizeAnswer } from "./answer-safety";
@@ -38,6 +38,17 @@ if (process.argv[1]?.endsWith("assistant-check.ts")) {
   assert.equal(isPointTopic("Poin saya tiba-tiba jadi nol"), true);
   assert.equal(isPointTopic("Bagaimana cara reset password customer?"), false);
   assert.equal(isPointTopic("Bagaimana proses refund order?"), false);
+
+  const pointDraft = "Terima kasih sudah menghubungi kami. Untuk memeriksa perbedaan antara riwayat poin dan riwayat pesanan, mohon kirimkan nomor pesanan terkait. Tim kami akan meninjau riwayat tersebut.";
+  const pointDraftHistory = [
+    { role: "user" as const, content: "Kenapa riwayat poin beda?" },
+    { role: "assistant" as const, content: "Riwayat poin dapat berbeda dari riwayat pesanan." },
+  ];
+  assert.equal(classifyConversationIntent("tolong buatkan draft balasan lainnya", pointDraftHistory, pointDraft), "draft_regeneration");
+  assert.equal(classifyConversationIntent("draft balasannya belum sesuai", pointDraftHistory, pointDraft), "draft_feedback");
+  assert.equal(classifyConversationIntent("kurang isi sapaan", pointDraftHistory, pointDraft), "draft_edit");
+  assert.equal(classifyConversationIntent("ini akunnya: 083119349222", pointDraftHistory, pointDraft), "supplied_context");
+  assert.equal(classifyConversationIntent("lalu apa saran yg bisa aku kasih ke client?", pointDraftHistory, pointDraft), "guidance_follow_up");
 
   // Legacy row: no Customer Reply field yet. Must never surface Customer
   // Action as a customer-facing draft — the app has to hold back and ask
@@ -105,8 +116,30 @@ if (process.argv[1]?.endsWith("assistant-check.ts")) {
   }];
   const point = pointAnswer("Kenapa riwayat poin beda?", pointDocuments);
   assert.ok(point);
-  assert.equal(point?.draft_reply, "");
+  assert.equal(isCustomerContextRequest(point?.draft_reply ?? ""), true);
   assert.deepEqual(point?.missing_context, ["Mohon minta nomor pesanan terkait sebelum kasus ini diverifikasi."]);
+  const alternateDraft = pointAnswer("tolong buatkan draft balasan lainnya", pointDocuments, pointDraftHistory, pointDraft);
+  assert.ok(alternateDraft);
+  assert.match(alternateDraft?.draft_reply ?? "", /^Halo Kak,/);
+  assert.match(alternateDraft?.draft_reply ?? "", /riwayat poin/i);
+  assert.equal(alternateDraft?.citations[0]?.document_id, "point-1b");
+  const greetedDraft = pointAnswer("kurang isi sapaan", pointDocuments, pointDraftHistory, pointDraft);
+  assert.match(greetedDraft?.draft_reply ?? "", /^Halo Kak,/);
+  assert.match(greetedDraft?.draft_reply ?? "", /riwayat pesanan/i);
+  const feedbackDraft = pointAnswer("draft balasannya belum sesuai", pointDocuments, pointDraftHistory, pointDraft);
+  assert.match(feedbackDraft?.draft_reply ?? "", /^Halo Kak,/);
+  const guidanceDraft = pointAnswer("lalu apa saran yg bisa aku kasih ke client?", pointDocuments, pointDraftHistory);
+  assert.equal(guidanceDraft?.intent, "Customer guidance");
+  assert.match(guidanceDraft?.answer ?? "", /riwayat poin/i);
+  assert.equal(guidanceDraft?.recommended_action, "Minta nomor pesanan terkait untuk verifikasi");
+  assert.match(guidanceDraft?.draft_reply ?? "", /nomor pesanan/i);
+  const suppliedAccount = pointAnswer(
+    "ini akunnya: 083119349222",
+    [{ ...pointDocuments[0], content: pointDocuments[0].content.replace("nomor pesanan terkait", "nomor akun terkait atau nomor pesanan terkait") }],
+    [{ role: "user", content: "Kenapa riwayat poin beda?" }, { role: "assistant", content: "Mohon kirimkan nomor akun terkait atau nomor pesanan terkait." }],
+  );
+  assert.equal(suppliedAccount?.missing_context.length, 0);
+  assert.doesNotMatch(suppliedAccount?.draft_reply ?? "", /083119349222|mohon kirimkan/i);
   assert.equal(point?.citations.length, 1);
   assert.equal(point?.answer.includes("Kemungkinan penyebab"), false);
   // Customer Action (internal) must never leak into the customer-facing draft.
@@ -203,9 +236,15 @@ if (process.argv[1]?.endsWith("assistant-check.ts")) {
     enforceMissingContextInvariant({ missing_context: ["nomor pesanan"], draft_reply: "Terima kasih..." }),
     { missing_context: ["nomor pesanan"], draft_reply: "" },
   );
+  assert.equal(isCustomerContextRequest("Mohon kirimkan nomor pesanan terkait agar kami dapat melakukan pengecekan lebih lanjut."), true);
+  assert.equal(isCustomerContextRequest("Kami sedang memeriksa status pengajuan Anda."), false);
   assert.deepEqual(
     enforceMissingContextInvariant({ missing_context: [], draft_reply: "Terima kasih..." }),
     { missing_context: [], draft_reply: "Terima kasih..." },
+  );
+  assert.deepEqual(
+    enforceMissingContextInvariant({ missing_context: ["nomor pesanan"], draft_reply: "Mohon kirimkan nomor pesanan terkait agar kami dapat melakukan pengecekan lebih lanjut." }),
+    { missing_context: ["nomor pesanan"], draft_reply: "Mohon kirimkan nomor pesanan terkait agar kami dapat melakukan pengecekan lebih lanjut." },
   );
   const leakedClarification = sanitizeAnswer({
     intent: "Needs clarification", summary: "", missing_context: ["akun"], recommended_action: "", answer: "SOURCE 1", draft_reply: "SOURCE 1", citations: [], confidence: "low",
@@ -387,12 +426,12 @@ if (process.argv[1]?.endsWith("assistant-check.ts")) {
   assert.equal(resolveProjectScope("inwan", [
     ...inwanHistory,
     { role: "user" as const, content: "Project B: export PDF bermasalah" },
-  ]).project, "B");
+  ]).project, "inwan");
   assert.equal(resolveProjectScope("inwan", [
     ...inwanHistory,
     { role: "user" as const, content: "Project B: export PDF bermasalah" },
     { role: "user" as const, content: "Langkah sudah dicoba" },
-  ]).project, "B");
+  ]).project, "inwan");
   assert.equal(resolveProjectScope("apa yang harus dilakukan?", [
     { role: "user" as const, content: "Project Inwan: aplikasi tidak bisa login, error invalid token" },
     { role: "user" as const, content: "Project B: export PDF tidak muncul" },
@@ -428,6 +467,63 @@ if (process.argv[1]?.endsWith("assistant-check.ts")) {
     "B",
   );
   assert.deepEqual(scoped.map((document) => document.id), ["scope-b"]);
+
+  // Regression: ordinary question openers are not project aliases, and changing
+  // topic preserves the established project while using generic point knowledge.
+  assert.deepEqual(projectNames("Cara cek perhitungan poin?"), []);
+  assert.deepEqual(projectNames("Kenapa saldo poin 0?"), []);
+  assert.deepEqual(projectNames("Bagaimana cara login?"), []);
+  const inwanTopicHistory = [
+    { role: "user" as const, content: "Project Inwan: aplikasi tidak bisa login sejak kemarin, muncul error invalid token" },
+    { role: "assistant" as const, content: "Belum ada knowledge perusahaan yang cukup relevan." },
+    { role: "user" as const, content: "Kenapa riwayat poin beda?" },
+    { role: "assistant" as const, content: "Knowledge point belum tersedia." },
+  ];
+  assert.equal(resolveProjectScope("Cara cek perhitungan poin?", inwanTopicHistory).project, "Inwan");
+  assert.equal(resolveProjectScope("Kenapa saldo poin 0?", inwanTopicHistory).project, "Inwan");
+  const genericPointReply = generateNoAiAnswer("Kenapa saldo poin 0?", [
+    { id: "global-points", title: POINT_ARTICLE_TITLE_MATCHES[0], url: null, category: "points", synced_at: "", content: "Customer Safe Summary: Saldo poin dapat menampilkan 0 karena sinkronisasi.\nCustomer Action: Minta nomor pesanan terkait untuk verifikasi.\nCustomer Reply: Mohon kirimkan nomor pesanan terkait agar kami dapat memeriksa saldo poin Anda" },
+  ], inwanTopicHistory);
+  assert.equal(genericPointReply.citations.length, 1);
+  assert.match(genericPointReply.answer, /Saldo poin/i);
+  assert.notEqual(genericPointReply.answer, "Maksudnya Project Inwan atau Project Cara?");
+  const feedback = generateNoAiAnswer("ya terus gimana dong, masa cuma itu?", [
+    { id: "feedback-source", title: "Project Inwan Login", url: null, category: "project-inwan", synced_at: "", content: "Customer Safe Summary: Invalid token perlu diverifikasi.\nCustomer Action: Minta log autentikasi.\nCustomer Reply: Mohon kirimkan log autentikasi." },
+  ], inwanTopicHistory);
+  assert.equal(feedback.missing_context.some((item) => /Project belum jelas/i.test(item)), false);
+  assert.notEqual(feedback.answer, "Maksudnya Project Inwan atau Project Cara?");
+
+  for (const message of ["thank you", "thanks", "ok thanks", "thank you, got it", "oke deh thank you", "sip thank you", "ok deh thank you", "makasih ya", "terima kasih ya"]) {
+    assert.equal(isClosingMessage(message), true, message);
+    const acknowledgement = generateNoAiAnswer(message, [], inwanTopicHistory);
+    assert.equal(acknowledgement.intent, "Conversation closed", message);
+    assert.match(acknowledgement.answer, /membantu|sesuai|kurang jelas/i, message);
+    assert.equal(acknowledgement.draft_reply.length > 0, true, message);
+  }
+  for (const message of ["ya terus gimana dong, masa cuma itu?", "masih kurang jelas", "belum menjawab pertanyaanku", "terus gimana?", "masa cuma itu?", "jawabannya masih kurang"]) {
+    assert.equal(isFeedbackMessage(message), true, message);
+    const feedbackReply = generateNoAiAnswer(message, [
+      { id: "feedback-source", title: "Project Inwan Login", url: null, category: "project-inwan", synced_at: "", content: "Customer Safe Summary: Invalid token perlu diverifikasi.\nCustomer Action: Minta log autentikasi.\nCustomer Reply: Mohon kirimkan log autentikasi." },
+    ], inwanTopicHistory);
+    assert.equal(feedbackReply.missing_context.some((item) => /Project belum jelas/i.test(item)), false, message);
+    assert.notEqual(feedbackReply.answer, "Maksudnya Project Inwan atau Project Cara?", message);
+  }
+  assert.equal(resolveProjectScope("inwan", [
+    ...inwanTopicHistory,
+    { role: "user" as const, content: "Cara cek perhitungan poin?" },
+  ]).project, "Inwan");
+  assert.equal(resolveProjectScope("A", [
+    { role: "user" as const, content: "Project A: login gagal" },
+    { role: "user" as const, content: "Project B: laporan terlambat" },
+  ]).project, "A");
+  assert.deepEqual(filterDocumentsByProject([
+    { id: "bare-inwan", title: "Inwan Login", url: null, content: "Login error", category: "inwan", synced_at: "" },
+    { id: "project-b", title: "Project B Login", url: null, content: "Project B login", category: "project-b", synced_at: "" },
+  ], "Inwan").map((document) => document.id), ["bare-inwan"]);
+  assert.equal(filterDocumentsByProject([
+    { id: "global", title: "Point article", url: null, content: "Saldo poin", category: "points", synced_at: "" },
+    { id: "other", title: "Project B export", url: null, content: "Project B export", category: "project-b", synced_at: "" },
+  ], "Inwan").map((document) => document.id).includes("global"), true);
 
   // A follow-up asking for timing must answer that intent, not repeat the
   // previous issue summary when the source has no SLA/timeline.

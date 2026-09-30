@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { GroundedAnswer, KnowledgeDocument } from "./assistant-types";
-import { continuationSignal, greetingAnswer, isClosingMessage, isGreetingOnly, isPointTopic, isSarcasticOrDismissive, missingContextMessage, pointAnswer, requiredContext, sourceLine } from "./retrieval";
+import { classifyConversationIntent, continuationSignal, greetingAnswer, isClosingMessage, isCustomerContextRequest, isFeedbackMessage, isGreetingOnly, isPointTopic, isSarcasticOrDismissive, missingContextMessage, pointAnswer, requiredContext, reviseCustomerDraft, sourceLine } from "./retrieval";
 import { withRetry } from "./retry";
 import { enforceMissingContextInvariant } from "./assistant-check";
 import { filterDocumentsByProject, historyForProject, resolveProjectScope } from "./project-scope";
@@ -132,11 +132,28 @@ function isFollowUpQuestion(issue: string) {
   return /\b(berapa lama|kapan|estimasi waktu|timeline|durasi|siapa|menangani|handle|status)\b/i.test(issue);
 }
 
-export function fallback(issue: string, documents: KnowledgeDocument[], history: Array<{ role: "user" | "assistant"; content: string }> = []): GroundedAnswer {
+export function fallback(issue: string, documents: KnowledgeDocument[], history: Array<{ role: "user" | "assistant"; content: string }> = [], currentDraft = ""): GroundedAnswer {
   const scope = resolveProjectScope(issue, history);
   const projects = scope.projects;
   const scopedDocuments = filterDocumentsByProject(documents, scope.project);
-  if (scope.ambiguous) {
+  const intent = classifyConversationIntent(issue, history, currentDraft);
+  if (intent === "draft_regeneration" || intent === "draft_feedback" || intent === "draft_edit") {
+    const source = scopedDocuments.find((document) => sourceLine(document.content, "Customer Reply"));
+    const reply = source ? sourceLine(source.content, "Customer Reply") : "";
+    if (source && reply) {
+      return {
+        intent: "Draft revision",
+        summary: "The existing customer-facing draft was revised using the active knowledge source.",
+        missing_context: [],
+        recommended_action: "Review the revised customer-facing draft before sending.",
+        answer: sourceLine(source.content, "Customer Safe Summary") || reply,
+        draft_reply: reviseCustomerDraft(reply, intent, currentDraft),
+        citations: [{ document_id: source.id, title: source.title, url: source.url, quote: source.content.slice(0, 240) }],
+        confidence: "high",
+      };
+    }
+  }
+  if (scope.ambiguous && !isClosingMessage(issue) && !isFeedbackMessage(issue)) {
     const projectList = scope.projects.map((project) => `Project ${project}`).join(", ").replace(/, ([^,]*)$/, " atau $1");
     return {
       intent: "Needs clarification",
@@ -154,7 +171,7 @@ export function fallback(issue: string, documents: KnowledgeDocument[], history:
   // question ("gimana statusnya?") without naming any issue topic — that
   // shape carries no keyword tying it to one project either.
   const ambiguousFollowUp = continuationSignal(issue, history) || (isNewQuestion(issue) && !hasExplicitIssueTopic(issue));
-  if (projects.length >= 2 && ambiguousFollowUp && !scope.explicit) {
+  if (projects.length >= 2 && ambiguousFollowUp && !scope.explicit && !isFeedbackMessage(issue)) {
     const projectList = projects.map((project) => `Project ${project}`).join(", ").replace(/, ([^,]*)$/, " atau $1");
     return {
       intent: "Needs clarification",
@@ -174,8 +191,8 @@ export function fallback(issue: string, documents: KnowledgeDocument[], history:
       summary: "The customer conversation was acknowledged.",
       missing_context: [],
       recommended_action: "No further action is required.",
-      answer: "Sama-sama. Jika ada issue lain, silakan kirimkan detailnya.",
-      draft_reply: "Sama-sama. Jika ada kendala lain, silakan kabari kami.",
+      answer: "Sama-sama! 😊 Apakah penjelasan tadi sudah membantu dan sesuai dengan yang Anda butuhkan? Jika masih ada bagian yang kurang jelas, silakan beri tahu saya.",
+      draft_reply: "Sama-sama! 😊 Apakah penjelasan tadi sudah membantu dan sesuai dengan yang Anda butuhkan? Jika masih ada bagian yang kurang jelas, silakan beri tahu kami.",
       citations: [],
       confidence: "high",
     };
@@ -316,12 +333,14 @@ export function fallback(issue: string, documents: KnowledgeDocument[], history:
   ];
   const answer = summaryLine ? `Kemungkinan penyebab: ${summaryLine}.` : "Kami sedang meninjau kendala yang disampaikan dan akan memverifikasi penanganan yang sesuai.";
   return {
-    intent: "Support issue",
+    intent: intent === "guidance_follow_up" ? "Customer guidance" : "Support issue",
     summary: `Kemungkinan penyebab dari: ${best.title}.`,
     missing_context: missing,
     recommended_action: actionLine || "Review the cited knowledge and confirm it applies to this customer's case before responding.",
     answer,
-    draft_reply: missing.length ? "" : `Terima kasih sudah menghubungi kami. ${replyLine}`,
+    draft_reply: missing.length
+      ? (replyLine && isCustomerContextRequest(replyLine) ? `Terima kasih sudah menghubungi kami. ${replyLine}` : "")
+      : `Terima kasih sudah menghubungi kami. ${replyLine}`,
     citations,
     confidence: missing.length ? "low" : "medium",
     ...(missing.length ? { knowledge_gap: true } : {}),
@@ -339,19 +358,20 @@ Treat source metadata as internal evidence only. Never copy SOURCE labels, IDs, 
 Only put something in missing_context if the customer's message truly lacks it and the agent cannot proceed without it. Never list information already provided (order number, account, error message, etc.) or "nice to have" details. Routine manual verification steps that the agent always performs as part of the SOP (checking a database, confirming a balance) belong in recommended_action, not missing_context — missing_context is only for what the customer still needs to supply.
 Never invent policies, refunds, timelines, credentials, or troubleshooting steps.
 Every supported company-specific claim needs a citation using the REFERENCE number it came from.
-Clarification Flow: before answering, check whether the issue plus the supplied history and sources are actually enough to give a grounded, specific reply. If not, do not guess — set missing_context to what is still needed, put ONE short, specific question in answer (e.g. ask for the exact error message or order number, not "can you give more details?"), and leave draft_reply empty; set confidence to "low". Never ask again for something the customer or agent already stated earlier in the history. If the message is ambiguous, indirect ("itu", "yang tadi", "masih sama"), or sarcastic, first try to resolve it from the conversation history; only ask a clarifying question if it genuinely cannot be resolved that way. If the conversation is discussing more than one distinct issue, identify which one the current message is about; if that itself is unclear, ask which issue it refers to instead of mixing information between them.
-Produce an editable customer-facing draft, never send it, and never claim it was sent. When missing_context is non-empty, draft_reply must be "".
+Clarification Flow: before answering, check whether the issue plus the supplied history and sources are actually enough to give a grounded, specific reply. If not, do not guess — set missing_context to what is still needed, put ONE short, specific question in answer (e.g. ask for the exact error message or order number, not "can you give more details?"). Leave draft_reply empty unless the cited Customer Reply is itself a safe, customer-facing request for the missing identifier; in that exception, preserve that request as the draft. Set confidence to "low" when clarification is needed. Never ask again for something the customer or agent already stated earlier in the history. If the message is ambiguous, indirect ("itu", "yang tadi", "masih sama"), or sarcastic, first try to resolve it from the conversation history; only ask a clarifying question if it genuinely cannot be resolved that way. If the conversation is discussing more than one distinct issue, identify which one the current message is about; if that itself is unclear, ask which issue it refers to instead of mixing information between them.
+Produce an editable customer-facing draft, never send it, and never claim it was sent. Draft regeneration or feedback must revise the supplied CURRENT DRAFT using only the active source's Customer Reply. A greeting edit must preserve the draft body and add one greeting only. A supplied customer identifier satisfies the matching Required Context; do not repeat the request or expose the identifier in the draft. A customer-guidance follow-up should answer the active topic using Customer Safe Summary and Customer Action as internal guidance, while using only Customer Reply for customer-facing wording. Never copy Customer Action into draft_reply.
 Return JSON matching the requested schema.`;
 
-export async function generateGroundedAnswer(issue: string, documents: KnowledgeDocument[], history: Array<{ role: "user" | "assistant"; content: string }> = [], contextSummary = ""): Promise<GroundedAnswer> {
+export async function generateGroundedAnswer(issue: string, documents: KnowledgeDocument[], history: Array<{ role: "user" | "assistant"; content: string }> = [], contextSummary = "", currentDraft = ""): Promise<GroundedAnswer> {
   if (isGreetingOnly(issue)) return greetingAnswer(issue, history);
+  if (isClosingMessage(issue)) return fallback(issue, documents, history, currentDraft);
   const scope = resolveProjectScope(issue, history);
-  if (scope.ambiguous) return fallback(issue, documents, history);
+  if (scope.ambiguous) return fallback(issue, documents, history, currentDraft);
   const scopedDocuments = scope.project ? filterDocumentsByProject(documents, scope.project) : documents;
   const modelHistory = scope.project ? historyForProject(history, scope.project) : history;
-  const deterministicPointAnswer = pointAnswer(issue, scopedDocuments, modelHistory);
+  const deterministicPointAnswer = pointAnswer(issue, scopedDocuments, modelHistory, currentDraft);
   if (deterministicPointAnswer) return deterministicPointAnswer;
-  if (!scopedDocuments.length || !configuredApiKey() || process.env.CSCOPILOT_NO_AI === "1") return fallback(issue, scopedDocuments, modelHistory);
+  if (!scopedDocuments.length || !configuredApiKey() || process.env.CSCOPILOT_NO_AI === "1") return fallback(issue, scopedDocuments, modelHistory, currentDraft);
   const context = scopedDocuments.map((doc, index) => `REFERENCE ${index + 1}\nCONTENT:\n${doc.content}`).join("\n\n");
   let response;
   try {
@@ -392,7 +412,7 @@ Do not invent facts not supported by the knowledge context or conversation.`
 ],
     } as never));
   } catch (error) {
-    if (isUnavailableAnthropicError(error)) return fallback(issue, scopedDocuments, history);
+    if (isUnavailableAnthropicError(error)) return fallback(issue, scopedDocuments, history, currentDraft);
     throw error;
   }
   if ((response as { stop_reason?: string }).stop_reason === "refusal") throw new Error("Claude refused this request");
@@ -407,11 +427,11 @@ Do not invent facts not supported by the knowledge context or conversation.`
     // A malformed model response must not break the support workflow. The
     // deterministic answer still uses only the retrieved customer-safe fields.
     console.warn("Claude returned non-JSON output; using grounded fallback");
-    return fallback(issue, scopedDocuments, history);
+    return fallback(issue, scopedDocuments, history, currentDraft);
   }
   if (!isModelAnswer(parsed)) {
     console.warn("Claude returned an unexpected schema; using grounded fallback");
-    return fallback(issue, scopedDocuments, history);
+    return fallback(issue, scopedDocuments, history, currentDraft);
   }
   const citations = mapCitations(parsed.citations, scopedDocuments);
   const grounded = citations.length === parsed.citations.length && citations.length > 0;

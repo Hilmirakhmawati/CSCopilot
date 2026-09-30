@@ -149,13 +149,13 @@ export default function AssistantPage() {
       const userMessage: Message = { id: `user-${Date.now()}`, role: "user", content, created_at: new Date().toISOString() };
       setMessages((items) => [...items, userMessage]);
       if (!id) {
-        const created = await apiFetch("/api/conversations", { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey }, body: JSON.stringify({ title: content.slice(0, 80), content }) }).then((response) => readJson<NewConversationResponse>(response));
+        const created = await apiFetch("/api/conversations", { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey }, body: JSON.stringify({ title: content.slice(0, 80), content, ...(draft ? { current_draft: draft } : {}) }) }).then((response) => readJson<NewConversationResponse>(response));
         if (!created.conversation?.id) throw new Error("Could not create conversation");
         id = created.conversation.id;
         result = created;
         setConversationId(id); setActiveId(id); setConversations((items) => [created.conversation, ...items]);
       } else {
-        result = await apiFetch(`/api/conversations/${id}/messages`, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey }, body: JSON.stringify({ content }) }).then((response) => readJson<AssistantResponse>(response));
+        result = await apiFetch(`/api/conversations/${id}/messages`, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey }, body: JSON.stringify({ content, ...(draft ? { current_draft: draft } : {}) }) }).then((response) => readJson<AssistantResponse>(response));
       }
       if (result.error) throw new Error(result.error);
       setAnswer(result); setDraft(result.draft_reply ?? ""); setDraftId(null); setSavedDraft(null); setHistory(null); setRestoredFromVersion(null); setMessages((items) => [...items, { id: result.message_id, role: "assistant", content: result.answer, citations: result.citations ?? [], created_at: result.created_at }]);

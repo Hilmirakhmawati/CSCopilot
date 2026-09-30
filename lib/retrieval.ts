@@ -21,7 +21,16 @@ function looksLikeBareIdentifier(word: string) {
 const identifierLabelWords = new Set(["nomor", "no", "id", "pesanan", "pesanannya", "order", "akun", "akunnya", "email"]);
 
 export function continuationSignal(query: string, history: Array<{ role: "user" | "assistant"; content: string }> = []) {
-  if (isStandaloneProjectAlias(query, history)) return true;
+  if (
+    isStandaloneProjectAlias(query, history) ||
+    isFeedbackMessage(query) ||
+    isClosingMessage(query) ||
+    isDraftRegenerationRequest(query) ||
+    isDraftFeedbackMessage(query) ||
+    isDraftGreetingEdit(query) ||
+    isSuppliedContextMessage(query) ||
+    isGuidanceFollowUp(query)
+  ) return true;
   const normalized = query.toLowerCase();
   const words = normalized.match(/[a-z0-9À-ɏ@.+-]+/g) ?? [];
   if (/\b(itu|nya|tersebut|ini|sebelumnya|barusan)\b/.test(normalized)) return true;
@@ -44,11 +53,70 @@ export function isSarcasticOrDismissive(query: string) {
   return sarcasticMarkers.test(query) || ironicPraise.test(query);
 }
 
+const feedbackMarkers = /(?:ya\s+terus\s+gimana\s+dong|masa\s+cuma\s+itu|masih\s+kurang\s+jelas|belum\s+menjawab\s+pertanyaan(?:ku|nya)?|terus\s+gimana|jawabannya\s+masih\s+kurang)/i;
+const draftRegenerationMarkers = /\b(?:buat(?:kan)?|generate|regenerasi|alternatif|lainnya|baru)\b[\s\w-]{0,40}\b(?:draft|balasan)\b|\b(?:draft|balasan)\b[\s\w-]{0,40}\b(?:lainnya|alternatif|baru)\b/i;
+const draftFeedbackMarkers = /\b(?:draft|balasan)\b[\s\w-]{0,30}\b(?:belum\s+sesuai|kurang|tidak\s+sesuai)\b/i;
+const greetingEditMarkers = /\b(?:kurang|tambah(?:kan)?)\b[\s\w-]{0,20}\b(?:isi\s+)?sapaan\b|\b(?:sapaan|salam)\b.*\b(?:kurang|tambah(?:kan)?)\b/i;
+const suppliedContextMarkers = /\b(?:ini|berikut)\s+(?:akun|akunnya|account|nomor\s+(?:pesanan|order|akun)|email)\b|\b(?:akun|akunnya|account|nomor\s+(?:pesanan|order|akun)|email)\s*[:#-]?\s*(?:\d{6,}|[\w.+-]+@[\w.-]+\.[a-z]{2,})/i;
+const guidanceFollowUpMarkers = /\b(?:apa\s+saran|saran\s+(?:apa|yang)|yang\s+bisa\s+(?:aku|saya|kami)\s+(?:kasih|sampaikan))\b[\s\w-]{0,50}\b(?:client|customer)\b/i;
+
+export function isFeedbackMessage(query: string) {
+  return feedbackMarkers.test(query);
+}
+
+export type ConversationIntent =
+  | "new_issue"
+  | "feedback"
+  | "draft_regeneration"
+  | "draft_feedback"
+  | "draft_edit"
+  | "supplied_context"
+  | "guidance_follow_up"
+  | "follow_up"
+  | "acknowledgement";
+
+export function isDraftRegenerationRequest(query: string) {
+  return draftRegenerationMarkers.test(query);
+}
+
+export function isDraftFeedbackMessage(query: string) {
+  return draftFeedbackMarkers.test(query);
+}
+
+export function isDraftGreetingEdit(query: string) {
+  return greetingEditMarkers.test(query);
+}
+
+export function isSuppliedContextMessage(query: string) {
+  const hasIdentifier = /\b\d{6,}\b|[\w.+-]+@[\w.-]+\.[a-z]{2,}/i.test(query);
+  return hasIdentifier && suppliedContextMarkers.test(query);
+}
+
+export function isGuidanceFollowUp(query: string) {
+  return guidanceFollowUpMarkers.test(query);
+}
+
+export function classifyConversationIntent(
+  query: string,
+  history: Array<{ role: "user" | "assistant"; content: string }> = [],
+  currentDraft = "",
+): ConversationIntent {
+  if (isClosingMessage(query)) return "acknowledgement";
+  if (isDraftGreetingEdit(query) && currentDraft) return "draft_edit";
+  if (isDraftRegenerationRequest(query) && currentDraft) return "draft_regeneration";
+  if (isDraftFeedbackMessage(query) && currentDraft) return "draft_feedback";
+  if (isSuppliedContextMessage(query)) return "supplied_context";
+  if (isGuidanceFollowUp(query)) return "guidance_follow_up";
+  if (isFeedbackMessage(query)) return "feedback";
+  if (continuationSignal(query, history)) return "follow_up";
+  return "new_issue";
+}
+
 // Pleasantries/closers ("oke terima kasih") need no knowledge search at all —
 // searching would just reuse whatever the last topic's documents were.
 export function isClosingMessage(query: string) {
-  const normalized = query.toLowerCase().trim().replace(/[.,!?]/g, "");
-  return /^(oke|ok|okay|baik|siap|noted|sip|makasih|terima kasih|thanks|thank you)( terima kasih| makasih| kak| ya)?$/.test(normalized);
+  const normalized = query.toLowerCase().trim().replace(/[.,!?]/g, "").replace(/\s+/g, " ");
+  return /^(?:(?:oke|ok|okay|baik|siap|noted|sip|makasih|terima kasih|thanks|thank you)(?: deh)?(?: terima kasih| makasih| thanks| thank you| got it| kak| ya)?)$/.test(normalized);
 }
 
 const greetingRoots = [
@@ -206,12 +274,29 @@ export function missingContextMessage(context: string | null, query: string) {
 // not just any reply containing a polite word like "mohon"/"silakan", which
 // could equally appear in a valid customer-facing sentence unrelated to
 // asking for an identifier (e.g. "Silakan cek email Anda untuk status...").
-function requestsContext(reply: string) {
+export function isCustomerContextRequest(reply: string) {
   return /\b(mohon|silakan|tolong)\b[^.!?]{0,80}\b(kirim|kirimkan|berikan|cantumkan|masukkan)\b[^.!?]{0,40}\b(nomor|akun|pesanan|order|email|id)\b/i.test(reply);
 }
 
+function withoutLeadingGreeting(value: string) {
+  return value.replace(/^(?:halo|hai|hello|hi|selamat\s+(?:pagi|siang|sore|malam))\b[^.!?]*[,!.]?\s*/i, "").trim();
+}
+
+export function addDraftGreeting(value: string) {
+  if (/^(?:halo|hai|hello|hi|selamat\s+(?:pagi|siang|sore|malam))\b/i.test(value.trim())) return value;
+  return `Halo Kak, ${value.trim()}`;
+}
+
+export function reviseCustomerDraft(sourceReply: string, intent: ConversationIntent, currentDraft = "") {
+  const source = sourceReply.trim();
+  if (!source) return "";
+  if (intent === "draft_edit") return addDraftGreeting(currentDraft || source);
+  const body = withoutLeadingGreeting(source);
+  return intent === "draft_regeneration" || intent === "draft_feedback" ? addDraftGreeting(body) : source;
+}
+
 function suppliedContextReply(reply: string, context: string, query: string) {
-  if (!requestsContext(reply)) return `${reply}.`;
+  if (!isCustomerContextRequest(reply)) return `${reply}.`;
   const label = context === "nomor pesanan terkait"
     ? "nomor pesanan"
     : context === "nomor atau email akun terkait"
@@ -227,7 +312,9 @@ export function pointAnswer(
   query: string,
   documents: KnowledgeDocument[],
   history: Array<{ role: "user" | "assistant"; content: string }> = [],
+  currentDraft = "",
 ): GroundedAnswer | null {
+  const intent = classifyConversationIntent(query, history, currentDraft);
   const contextQuery = continuationSignal(query, history)
     ? [...history.filter((message) => message.role === "user").slice(-3).map((message) => message.content), query].join(" ")
     : query;
@@ -286,13 +373,18 @@ export function pointAnswer(
       knowledge_gap: true,
     };
   }
+  const draft = intent === "draft_regeneration" || intent === "draft_feedback" || intent === "draft_edit"
+    ? reviseCustomerDraft(reply, intent, currentDraft)
+    : missingContextItems.length
+      ? `${reply}.`
+      : suppliedContextReply(reply, context ?? "", contextQuery);
   return {
-    intent: "Point support issue",
+    intent: intent === "guidance_follow_up" ? "Customer guidance" : "Point support issue",
     summary,
     missing_context: missingContextItems,
     recommended_action: action,
     answer: `${summary}.`,
-    draft_reply: missingContextItems.length ? "" : suppliedContextReply(reply, context ?? "", contextQuery),
+    draft_reply: draft,
     citations,
     confidence: "high",
   };
