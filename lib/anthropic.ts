@@ -3,7 +3,7 @@ import type { GroundedAnswer, KnowledgeDocument } from "./assistant-types";
 import { continuationSignal, greetingAnswer, isClosingMessage, isGreetingOnly, isPointTopic, isSarcasticOrDismissive, missingContextMessage, pointAnswer, requiredContext, sourceLine } from "./retrieval";
 import { withRetry } from "./retry";
 import { enforceMissingContextInvariant } from "./assistant-check";
-import { filterDocumentsByProject, resolveProjectScope } from "./project-scope";
+import { filterDocumentsByProject, historyForProject, resolveProjectScope } from "./project-scope";
 
 const DEFAULT_MODEL = "claude-sonnet-5";
 
@@ -90,12 +90,18 @@ export function extractFirstJsonObject(text: string): string | undefined {
 // answer — a slightly wrong citation shouldn't sink an otherwise-valid reply.
 export function mapCitations(citations: ModelCitation[], documents: KnowledgeDocument[]): GroundedAnswer["citations"] {
   return citations
-    .map((citation) => documents[citation.reference_index - 1] && { document_id: documents[citation.reference_index - 1].id, title: documents[citation.reference_index - 1].title, url: documents[citation.reference_index - 1].url, quote: citation.quote })
+    .map((citation) => {
+      const document = documents[citation.reference_index - 1];
+      if (!document || !document.content.includes(citation.quote)) return undefined;
+      return { document_id: document.id, title: document.title, url: document.url, quote: citation.quote };
+    })
     .filter((citation): citation is GroundedAnswer["citations"][number] => Boolean(citation));
 }
 
 function suppliedClarificationDetails(issue: string, history: Array<{ role: "user" | "assistant"; content: string }>) {
-  const userMessages = history.filter((message) => message.role === "user");
+  const scope = resolveProjectScope(issue, history);
+  const scopedHistory = scope.project ? historyForProject(history, scope.project) : history;
+  const userMessages = scopedHistory.filter((message) => message.role === "user");
   // A Points-topic message marks a topic switch away from whatever issue
   // (e.g. login) was being clarified before it — details supplied before
   // that switch no longer apply to the current checklist.
@@ -121,40 +127,15 @@ function hasExplicitIssueTopic(issue: string) {
   return /\b(login|akun|account|error|pesan|masalah|kendala|gagal|pembayaran|refund|order|pesanan)\b/i.test(issue);
 }
 
-function recentProjectNames(history: Array<{ role: "user" | "assistant"; content: string }>) {
-  const projects: string[] = [];
-  for (const message of history) {
-    if (message.role !== "user") continue;
-    const match = message.content.match(/\b(?:project|proyek)\s+([^:,\n]+?)\s*:/i);
-    const name = match?.[1]?.trim();
-    if (name && !projects.some((project) => project.toLowerCase() === name.toLowerCase())) projects.push(name);
-  }
-  return projects.slice(-3);
-}
 
-function explicitProjectName(issue: string) {
-  return issue.match(/\b(?:project|proyek)\s+([^:,\n]+?)(?=\s*[:,-]|\s+(?:kenapa|mengapa|bagaimana|gimana|tidak|ada|juga|untuk)\b|$)/i)?.[1]?.trim();
-}
-
-function mentionsProject(issue: string, projects: string[]) {
-  return projects.some((project) => new RegExp(`\\b(?:project|proyek)\\s+${project.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\$&")}\\b`, "i").test(issue));
-}
-
-function projectScopedDocuments(issue: string, documents: KnowledgeDocument[]) {
-  const project = explicitProjectName(issue);
-  if (!project) return documents;
-  const marker = new RegExp(`\\b(?:project|proyek)\\s+${project.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\$&")}\\b`, "i");
-  return documents.filter((document) => marker.test(`${document.category ?? ""} ${document.title} ${document.content}`));
-}
-
-function isTimelineQuestion(issue: string) {
-  return /\b(berapa lama|kapan|estimasi waktu|timeline|durasi)\b/i.test(issue);
+function isFollowUpQuestion(issue: string) {
+  return /\b(berapa lama|kapan|estimasi waktu|timeline|durasi|siapa|menangani|handle|status)\b/i.test(issue);
 }
 
 export function fallback(issue: string, documents: KnowledgeDocument[], history: Array<{ role: "user" | "assistant"; content: string }> = []): GroundedAnswer {
-  const projects = recentProjectNames(history);
   const scope = resolveProjectScope(issue, history);
-  const scopedDocuments = scope.project ? filterDocumentsByProject(documents, scope.project) : projectScopedDocuments(issue, documents);
+  const projects = scope.projects;
+  const scopedDocuments = filterDocumentsByProject(documents, scope.project);
   if (scope.ambiguous) {
     const projectList = scope.projects.map((project) => `Project ${project}`).join(", ").replace(/, ([^,]*)$/, " atau $1");
     return {
@@ -173,7 +154,7 @@ export function fallback(issue: string, documents: KnowledgeDocument[], history:
   // question ("gimana statusnya?") without naming any issue topic — that
   // shape carries no keyword tying it to one project either.
   const ambiguousFollowUp = continuationSignal(issue) || (isNewQuestion(issue) && !hasExplicitIssueTopic(issue));
-  if (projects.length >= 2 && ambiguousFollowUp && !mentionsProject(issue, projects)) {
+  if (projects.length >= 2 && ambiguousFollowUp && !scope.explicit) {
     const projectList = projects.map((project) => `Project ${project}`).join(", ").replace(/, ([^,]*)$/, " atau $1");
     return {
       intent: "Needs clarification",
@@ -225,10 +206,21 @@ export function fallback(issue: string, documents: KnowledgeDocument[], history:
     .slice(0, 3)
     .map(({ document }) => document);
 
-  if (isTimelineQuestion(issue)) {
+  if (isFollowUpQuestion(issue)) {
     const bestReply = ranked[0] ? sourceLine(ranked[0].content, "Customer Reply") : "";
-    const supportedTimeline = /\b\d+\s*(?:menit|jam|hari|minggu|bulan|tahun)\b|\b(?:hari|minggu|bulan)\s+kerja\b|\b(?:ditangani|menangani|oleh)\b/i.test(bestReply);
-    if (supportedTimeline && bestReply) {
+    const asksTimeline = /\b(berapa lama|kapan|estimasi waktu|timeline|durasi)\b/i.test(issue);
+    const asksOwner = /\b(siapa|menangani|handle)\b/i.test(issue);
+    const asksStatus = /\bstatus\b/i.test(issue);
+    const supportedTimeline = /\b\d+\s*(?:menit|jam|hari|minggu|bulan|tahun)\b|\b(?:hari|minggu|bulan)\s+kerja\b/i.test(bestReply);
+    const supportedOwner = asksOwner && /\b(?:tim|team|oleh)\b/i.test(bestReply);
+    const supportedStatus = asksStatus && bestReply.length > 0;
+    const supportedFollowUp = (asksTimeline && supportedTimeline) || supportedOwner || supportedStatus;
+    const followUpContext = ranked[0] ? requiredContext(sourceLine(ranked[0].content, "Customer Action"), sourceLine(ranked[0].content, "Required Context")) : null;
+    const followUpQuery = continuationSignal(issue)
+      ? [...history.filter((message) => message.role === "user").slice(-3).map((message) => message.content), issue].join(" ")
+      : issue;
+    const followUpMissing = followUpContext ? missingContextMessage(followUpContext, followUpQuery) : null;
+    if (supportedFollowUp && bestReply && !followUpMissing) {
       return {
         intent: "Support issue",
         summary: "The requested timeline or ownership is supported by the active knowledge.",
@@ -243,9 +235,11 @@ export function fallback(issue: string, documents: KnowledgeDocument[], history:
     return {
       intent: "Needs clarification",
       summary: "The customer asks for a timeline that is not provided by the available knowledge.",
-      missing_context: ["Estimasi waktu penyelesaian belum tersedia di knowledge perusahaan."],
-      recommended_action: "Confirm the timeline with the responsible team before replying.",
-      answer: "Estimasi waktu penyelesaian belum tersedia di knowledge perusahaan dan perlu dikonfirmasi ke tim terkait.",
+      missing_context: [followUpMissing ?? "Estimasi waktu penyelesaian belum tersedia di knowledge perusahaan."],
+      recommended_action: "Confirm the timeline or current status with the responsible team before replying.",
+      answer: asksTimeline
+        ? "Estimasi waktu penyelesaian belum tersedia di knowledge perusahaan dan perlu dikonfirmasi ke tim terkait."
+        : "Status kasus belum dapat dikonfirmasi dari knowledge perusahaan dan perlu diverifikasi ke tim terkait.",
       draft_reply: "",
       citations: [],
       confidence: "low",
@@ -354,7 +348,8 @@ export async function generateGroundedAnswer(issue: string, documents: Knowledge
   const scope = resolveProjectScope(issue, history);
   if (scope.ambiguous) return fallback(issue, documents, history);
   const scopedDocuments = scope.project ? filterDocumentsByProject(documents, scope.project) : documents;
-  const deterministicPointAnswer = pointAnswer(issue, scopedDocuments, history);
+  const modelHistory = scope.project ? historyForProject(history, scope.project) : history;
+  const deterministicPointAnswer = pointAnswer(issue, scopedDocuments, modelHistory);
   if (deterministicPointAnswer) return deterministicPointAnswer;
   if (!configuredApiKey() || process.env.CSCOPILOT_NO_AI === "1") return fallback(issue, scopedDocuments, history);
   const context = scopedDocuments.map((doc, index) => `REFERENCE ${index + 1}\nCONTENT:\n${doc.content}`).join("\n\n");
@@ -366,7 +361,7 @@ export async function generateGroundedAnswer(issue: string, documents: Knowledge
       thinking: { type: "adaptive" } as never,
       system,
 messages: [
-  ...history,
+  ...modelHistory,
   {
     role: "user",
     content: `CURRENT CLIENT MESSAGE (answer this; the messages above are context only):
@@ -418,7 +413,18 @@ Do not invent facts not supported by the knowledge context or conversation.`
     console.warn("Claude returned an unexpected schema; using grounded fallback");
     return fallback(issue, scopedDocuments, history);
   }
-  return enforceMissingContextInvariant({ ...parsed, citations: mapCitations(parsed.citations, scopedDocuments) });
+  const citations = mapCitations(parsed.citations, scopedDocuments);
+  const grounded = citations.length > 0 || scopedDocuments.length === 0;
+  return enforceMissingContextInvariant({
+    ...parsed,
+    citations,
+    ...(grounded ? {} : {
+      answer: "Jawaban ini belum memiliki sumber knowledge yang valid dan perlu ditinjau ulang oleh tim Customer Support.",
+      draft_reply: "",
+      confidence: "low" as const,
+      missing_context: ["Sumber knowledge yang valid belum tersedia untuk jawaban ini."],
+    }),
+  });
 }
 
 export { fallback as generateNoAiAnswer };

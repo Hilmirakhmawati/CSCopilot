@@ -1,6 +1,6 @@
 import type { GroundedAnswer, KnowledgeDocument } from "./assistant-types";
 import { getSupabaseAdmin } from "./db";
-import { filterDocumentsByProject, resolveProjectScope } from "./project-scope";
+import { filterDocumentsByProject, historyForProject, resolveProjectScope } from "./project-scope";
 
 // Short questions or ones that reference something already said ("itu", "nya")
 // carry no keywords of their own — only those get to borrow prior context.
@@ -298,7 +298,7 @@ export function pointAnswer(
 }
 
 async function search(supabase: ReturnType<typeof getSupabaseAdmin>, query: string): Promise<KnowledgeDocument[]> {
-  const result = await supabase.rpc("search_knowledge_documents", { search_query: query, result_limit: 5 });
+  const result = await supabase.rpc("search_knowledge_documents", { search_query: query, result_limit: 20 });
   if (result.error) throw result.error;
   return (result.data ?? []) as KnowledgeDocument[];
 }
@@ -312,7 +312,10 @@ export async function retrieveKnowledge(query: string, history: Array<{ role: "u
   const pointTopic = isPointTopic(combinedQuery);
   const scope = resolveProjectScope(query, history);
   if (scope.ambiguous) return [];
-  const scopeResults = (documents: KnowledgeDocument[]) => filterDocumentsByProject(documents, scope.project);
+  const scopeResults = (documents: KnowledgeDocument[]) => filterDocumentsByProject(documents, scope.project).slice(0, 5);
+  const scopedHistory = scope.project ? historyForProject(history, scope.project) : history;
+  const scopedPriorUserText = scopedHistory.filter((message) => message.role === "user").slice(-3).map((message) => message.content).join(" ");
+  const scopedCombinedQuery = continuation && scopedPriorUserText ? `${scopedPriorUserText} ${query}` : combinedQuery;
   const own = scopeResults(await search(supabase, query));
   if (!pointTopic) {
     // A continuation's raw query ("itu gimana solusinya?") carries no topic
@@ -320,7 +323,7 @@ export async function retrieveKnowledge(query: string, history: Array<{ role: "u
     // a real match. Prefer the history-combined query; only fall back to the
     // raw-query hit if the combined search truly finds nothing.
     if (!continuation) return own;
-    const combined = scopeResults(await search(supabase, combinedQuery));
+    const combined = scopeResults(await search(supabase, scopedCombinedQuery));
     return combined.length ? combined : own;
   }
 
@@ -334,6 +337,6 @@ export async function retrieveKnowledge(query: string, history: Array<{ role: "u
   if (targeted.length) return targeted;
   if (!continuationSignal(query) || !priorUserText) return selectPointArticle(own, null);
 
-  const priorSearch = scopeResults(await search(supabase, combinedQuery));
+  const priorSearch = scopeResults(await search(supabase, scopedCombinedQuery));
   return selectPointArticle(priorSearch, pointTarget);
 }

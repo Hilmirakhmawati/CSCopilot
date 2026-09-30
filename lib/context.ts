@@ -1,3 +1,5 @@
+import { projectNames } from "./project-scope";
+
 // Active context is a small, structured, conversation-scoped record — not a
 // second copy of history. Values are only ever "system_extracted" from the
 // customer's own words via keyword/regex matching (no extra Claude call, no
@@ -19,7 +21,6 @@ export type ActiveContext = Record<string, ContextValue>;
 const resolvedPattern = /\b(sudah|udah)\s+(fixed|selesai|beres|diperbaiki|diupload|di-upload|terkirim)\b|\bsolved\b|\bresolved\b/i;
 const pendingPattern = /\bmasih\s+(pending|menunggu|belum)\b|\bbelum\s+(selesai|beres|fixed)\b|\bwaiting\b/i;
 const confirmPattern = /\b(benar|betul|iya\s+benar|confirmed|saya\s+konfirmasi|sudah\s+dikonfirmasi)\b/i;
-const projectPattern = /\b(?:project|proyek)\s*[:=-]\s*([^,.\n]+)/i;
 
 // Bound how much of a raw message becomes a "topic" label — this is a
 // pointer for prompt context, not a transcript. The full message is already
@@ -46,7 +47,7 @@ export function updateActiveContext(message: string, previous: ActiveContext, is
     else if (confirmed) next.topic = { ...next.topic, verification: "verified", timestamp: now };
   }
 
-  const project = message.match(projectPattern)?.[1]?.trim();
+  const project = projectNames(message)[0];
   if (project) next.project = withMeta(project, now, "active", confirmed);
 
   return next;

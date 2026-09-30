@@ -3,17 +3,8 @@ import type { GroundedAnswer } from "./assistant-types";
 import { getSupabaseAdmin } from "./db";
 import { greetingAnswer, isGreetingOnly, retrieveKnowledge, continuationSignal } from "./retrieval";
 import { activeContextForPrompt, estimateTokens, supersedeTopic, trimHistoryToBudget, updateActiveContext, type ActiveContext } from "./context";
-import { hasCustomerFacingSourceLeak, validateCitations } from "./assistant-check";
-
-// Last-resort backstop: if the model still echoes a source marker or UUID
-// into customer-facing text despite the system prompt, replace it with a
-// safe holding reply rather than showing internal IDs to a customer.
-const LEAK_FALLBACK_ANSWER = "Mohon maaf, jawaban ini perlu ditinjau ulang oleh tim Customer Support sebelum dikirim ke customer.";
-
-function sanitizeAnswer(answer: GroundedAnswer): GroundedAnswer {
-  if (!hasCustomerFacingSourceLeak(answer.answer) && !hasCustomerFacingSourceLeak(answer.draft_reply)) return answer;
-  return { ...answer, answer: LEAK_FALLBACK_ANSWER, draft_reply: LEAK_FALLBACK_ANSWER, confidence: "low" };
-}
+import { sanitizeAnswer } from "./answer-safety";
+import { validateCitations } from "./assistant-check";
 
 type Database = ReturnType<typeof getSupabaseAdmin>;
 

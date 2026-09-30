@@ -5,25 +5,12 @@ import { activeContextForPrompt, trimHistoryToBudget, updateActiveContext } from
 import { readJson } from "./validation";
 import type { Citation, KnowledgeDocument } from "./assistant-types";
 import { filterDocumentsByProject, resolveProjectScope } from "./project-scope";
+import { enforceMissingContextInvariant, hasCustomerFacingSourceLeak, sanitizeAnswer } from "./answer-safety";
 
-const uuidPattern = "[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
-const sourceMarkerPattern = new RegExp(`(?:\\bSOURCE\\s+\\d+\\b|\\b(?:ID|TITLE|URL|CONTENT|SCORE|RELEVANCE|SIMILARITY)\\s*:)`, "i");
-const uuidRegex = new RegExp(`\\b${uuidPattern}\\b`, "i");
+export { enforceMissingContextInvariant, hasCustomerFacingSourceLeak, sanitizeAnswer } from "./answer-safety";
 
 export function validateCitations(citations: Citation[], documentIds: Set<string>) {
   return citations.filter((citation) => documentIds.has(citation.document_id));
-}
-
-export function hasCustomerFacingSourceLeak(value: string) {
-  return sourceMarkerPattern.test(value) || uuidRegex.test(value);
-}
-
-// Code-level guarantee for the Clarification Flow: if the model (or a
-// fallback path) reports missing_context, don't trust it to also have left
-// draft_reply empty — enforce it here so a Suggested Reply can never appear
-// alongside an unanswered "what's still missing" state.
-export function enforceMissingContextInvariant<T extends { missing_context: string[]; draft_reply: string }>(answer: T): T {
-  return answer.missing_context.length > 0 ? { ...answer, draft_reply: "" } : answer;
 }
 
 if (process.argv[1]?.endsWith("assistant-check.ts")) {
@@ -34,7 +21,7 @@ if (process.argv[1]?.endsWith("assistant-check.ts")) {
 
   const docs: KnowledgeDocument[] = [
     { id: "doc-1", title: "A", url: null, content: "", category: null, synced_at: "" },
-    { id: "doc-2", title: "B", url: "https://x", content: "", category: null, synced_at: "" },
+    { id: "doc-2", title: "B", url: "https://x", content: "q", category: null, synced_at: "" },
   ];
   const mapped = mapCitations([{ reference_index: 2, quote: "q" }, { reference_index: 9, quote: "dropped" }], docs);
   assert.deepEqual(mapped, [{ document_id: "doc-2", title: "B", url: "https://x", quote: "q" }]);
@@ -220,6 +207,11 @@ if (process.argv[1]?.endsWith("assistant-check.ts")) {
     enforceMissingContextInvariant({ missing_context: [], draft_reply: "Terima kasih..." }),
     { missing_context: [], draft_reply: "Terima kasih..." },
   );
+  const leakedClarification = sanitizeAnswer({
+    intent: "Needs clarification", summary: "", missing_context: ["akun"], recommended_action: "", answer: "SOURCE 1", draft_reply: "SOURCE 1", citations: [], confidence: "low",
+  });
+  assert.equal(leakedClarification.draft_reply, "");
+  assert.equal(mapCitations([{ reference_index: 1, quote: "not in source" }], [{ ...docs[0], content: "actual source" }]).length, 0);
 
   const clarificationFollowUp = generateNoAiAnswer(
     'pesannya "invalid token". langkah yg sudah dicoba yaitu connect wifi ulang lalu coba login lagi. dan sama saja',
@@ -382,10 +374,30 @@ if (process.argv[1]?.endsWith("assistant-check.ts")) {
   ];
   assert.equal(resolveProjectScope("Datanya sudah dicek, error muncul di modul export.", scopeHistory).project, "A");
   assert.equal(resolveProjectScope("Untuk Project B, laporan tidak muncul.", scopeHistory).project, "B");
+  assert.equal(resolveProjectScope("Project Alpha Mobile: login gagal", []).project, "Alpha Mobile");
+  assert.equal(filterDocumentsByProject([
+    { id: "proyek-a", title: "Proyek A - Login", url: null, content: "Proyek A login", category: "proyek-a", synced_at: "" },
+  ], "A").length, 1);
+  const naturalContext = updateActiveContext("Untuk Project-B, laporan terlambat", {}, false, "2026-01-01T00:00:00Z");
+  assert.equal(naturalContext.project?.value, "B");
+  assert.equal(resolveProjectScope("Bisa cek status untuk ini?", [
+    { role: "user" as const, content: "Project Alpha Mobile ada kendala." },
+    { role: "user" as const, content: "Project B juga ada kendala." },
+  ]).projects.join(", "), "Alpha Mobile, B");
   assert.equal(resolveProjectScope("Bisa cek status untuk ini?", [
     ...scopeHistory,
     { role: "user" as const, content: "Project B juga ada kendala, beda kasus." },
   ]).ambiguous, true);
+  const scopedClarification = generateNoAiAnswer(
+    "Project B: Apakah sudah ada solusi?",
+    [],
+    [
+      { role: "user", content: "Project A: akun user error \"account locked\"." },
+      { role: "user", content: "Project B: laporan error \"timeout\"." },
+      { role: "user", content: "Project B: langkah sudah dicoba." },
+    ],
+  );
+  assert.match(scopedClarification.missing_context.join(" "), /akun|account/i);
   const scoped = filterDocumentsByProject(
     [
       { id: "scope-a", title: "Project A login", url: null, content: "Project A login", category: "project-a", synced_at: "" },
@@ -408,6 +420,13 @@ if (process.argv[1]?.endsWith("assistant-check.ts")) {
   assert.match(timelineFollowUp.answer, /estimasi|waktu|timeline/i);
   assert.equal(timelineFollowUp.draft_reply, "");
   assert.equal(timelineFollowUp.confidence, "low");
+
+  const ownerOnlySource = generateNoAiAnswer(
+    "Berapa lama biasanya ini bisa selesai?",
+    [{ ...projectALogin, content: projectALogin.content.replace("Customer Reply: Silakan buka kunci akun Project A.", "Customer Reply: Akan ditangani oleh tim terkait.") }],
+    [{ role: "user", content: "Kami ada masalah login di Project A." }],
+  );
+  assert.equal(ownerOnlySource.draft_reply, "");
 
   const timelineWithSource = generateNoAiAnswer(
     "Berapa lama biasanya ini bisa selesai?",
