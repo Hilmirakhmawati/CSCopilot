@@ -281,3 +281,20 @@ Project A: customer complain login-nya keep failing terus, udah dicoba reset pas
 Run TC-01, 02, 03 first (cheapest signal on the core "latest question" problem). Run TC-04, 06, 08 next (multi-project isolation — the meeting's specific ask). Run TC-05, 07, 09, 10 last (context window, no-knowledge, language).
 
 Re-run the full set after the prompt/context fix and diff each case's actual `draft_reply` against its baseline run.
+
+## Deterministic verification — 2026-09-30
+
+| Case | Path | Result | Evidence | Limitation |
+|---|---|---|---|---|
+| TC-01 | deterministic fallback | Pass | `npx tsx lib/assistant-check.ts`; direct Project A issue remains scoped | Fixture-level; live KB still needs UI run |
+| TC-02 | deterministic fallback | Pass | Timeline follow-up now clarifies when no SLA source exists; supported source can produce a grounded draft | Live model behavior still needs UI run |
+| TC-03 | deterministic fallback | Pass | Explicit Project B scope excludes Project A citations | Retrieval RPC still needs live UI run |
+| TC-04 | deterministic fallback | Fixture-dependent | Shared scope resolver covers distinct project markers | Requires two project-marked login articles in synced KB |
+| TC-05 | deterministic fallback | Pass | Single project inherited from earlier history | Requires matching Project A export article in live KB |
+| TC-06 | deterministic fallback | Pass | Ambiguous multi-project follow-up returns low confidence with empty draft/citations | Exact UI conversation still needs manual run |
+| TC-07 | deterministic fallback | Pass | Unknown Project A topic returns low confidence, empty draft, and no citation | Requires confirming topic is absent from live KB |
+| TC-08 | deterministic fallback | Fixture-dependent | Project scope prevents cross-project document mixing | Requires conflicting project-marked knowledge |
+| TC-09 | deterministic fallback | Pass | Long-history latest Project B report context excludes early Project A checkout/payment terms | Live 12+ message UI run still needed |
+| TC-10 | deterministic fallback | Pass | Indonesian/mixed-language issue stays customer-facing and does not repeat completed reset step | Claude model path remains unverified |
+
+Live Supabase retrieval and the Claude model path still require manual UI QA. `npm test` is unavailable because `package.json` has no `test` script; the deterministic regression command is `npx tsx lib/assistant-check.ts`.

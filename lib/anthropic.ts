@@ -217,7 +217,29 @@ export function fallback(issue: string, documents: KnowledgeDocument[], history:
       confidence: "low",
     };
   }
+  const contextWords = words(contextText);
+  const ranked = scopedDocuments
+    .map((document, index) => ({ document, index, score: [...words(`${document.title} ${document.content}`)].filter((word) => contextWords.has(word)).length }))
+    .sort((a, b) => b.score - a.score || a.index - b.index)
+    .filter(({ score }) => score > 0)
+    .slice(0, 3)
+    .map(({ document }) => document);
+
   if (isTimelineQuestion(issue)) {
+    const bestReply = ranked[0] ? sourceLine(ranked[0].content, "Customer Reply") : "";
+    const supportedTimeline = /\b\d+\s*(?:menit|jam|hari|minggu|bulan|tahun)\b|\b(?:hari|minggu|bulan)\s+kerja\b|\b(?:ditangani|menangani|oleh)\b/i.test(bestReply);
+    if (supportedTimeline && bestReply) {
+      return {
+        intent: "Support issue",
+        summary: "The requested timeline or ownership is supported by the active knowledge.",
+        missing_context: [],
+        recommended_action: "Use the supported timeline or ownership wording from the cited knowledge.",
+        answer: bestReply,
+        draft_reply: `Terima kasih sudah menghubungi kami. ${bestReply}`,
+        citations: [{ document_id: ranked[0].id, title: ranked[0].title, url: ranked[0].url, quote: ranked[0].content.slice(0, 240) }],
+        confidence: "medium",
+      };
+    }
     return {
       intent: "Needs clarification",
       summary: "The customer asks for a timeline that is not provided by the available knowledge.",
@@ -229,13 +251,6 @@ export function fallback(issue: string, documents: KnowledgeDocument[], history:
       confidence: "low",
     };
   }
-  const contextWords = words(contextText);
-  const ranked = scopedDocuments
-    .map((document, index) => ({ document, index, score: [...words(`${document.title} ${document.content}`)].filter((word) => contextWords.has(word)).length }))
-    .sort((a, b) => b.score - a.score || a.index - b.index)
-    .filter(({ score }) => score > 0)
-    .slice(0, 3)
-    .map(({ document }) => document);
 
   if (!ranked.length) {
     // The account/error/steps checklist belongs to whatever issue is

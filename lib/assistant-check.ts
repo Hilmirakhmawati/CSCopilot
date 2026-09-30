@@ -409,6 +409,42 @@ if (process.argv[1]?.endsWith("assistant-check.ts")) {
   assert.equal(timelineFollowUp.draft_reply, "");
   assert.equal(timelineFollowUp.confidence, "low");
 
+  const timelineWithSource = generateNoAiAnswer(
+    "Berapa lama biasanya ini bisa selesai?",
+    [{
+      ...projectALogin,
+      content: projectALogin.content.replace("Customer Reply: Silakan buka kunci akun Project A.", "Customer Reply: Biasanya selesai dalam 2 hari kerja."),
+    }],
+    [{ role: "user", content: "Kami ada masalah login di Project A." }],
+  );
+  assert.match(timelineWithSource.draft_reply, /2 hari kerja/i);
+
+  const mixedLanguageLogin = generateNoAiAnswer(
+    "Project A: customer complain login-nya keep failing terus, udah dicoba reset password tapi masih error.",
+    [projectALogin],
+  );
+  assert.match(mixedLanguageLogin.draft_reply, /login|akun|error/i);
+  assert.doesNotMatch(mixedLanguageLogin.draft_reply, /reset password/i);
+
+  const longHistory = Array.from({ length: 12 }, (_, index) => ({
+    role: index % 2 === 0 ? "user" as const : "assistant" as const,
+    content: index < 6 ? "Project A: checkout gagal karena payment gateway timeout." : "Project B: laporan mingguan terlambat terkirim.",
+  }));
+  const longHistoryAnswer = generateNoAiAnswer(
+    "Untuk Project B tadi, siapa yang biasanya menangani ini kalau lewat dari jadwal?",
+    [{
+      id: "project-b-owner",
+      title: "Project B - Report owner",
+      url: "https://notion.so/project-b-owner",
+      content: "Customer Safe Summary: Laporan mingguan Project B terlambat.\nCustomer Reply: Tim reporting menangani laporan Project B yang lewat jadwal.",
+      category: "project-b",
+      synced_at: "",
+    }],
+    longHistory,
+  );
+  assert.match(longHistoryAnswer.draft_reply, /tim reporting|Project B/i);
+  assert.equal(longHistoryAnswer.draft_reply.match(/checkout|payment gateway/i), null);
+
   // An explicit Project B question must not cite a Project A document merely
   // because both documents share a generic issue word such as "gagal".
   const switchedProject = generateNoAiAnswer(
