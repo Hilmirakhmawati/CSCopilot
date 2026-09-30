@@ -153,7 +153,7 @@ export function fallback(issue: string, documents: KnowledgeDocument[], history:
   // (continuationSignal: "itu", bare IDs, ...) or by asking a fresh-looking
   // question ("gimana statusnya?") without naming any issue topic — that
   // shape carries no keyword tying it to one project either.
-  const ambiguousFollowUp = continuationSignal(issue) || (isNewQuestion(issue) && !hasExplicitIssueTopic(issue));
+  const ambiguousFollowUp = continuationSignal(issue, history) || (isNewQuestion(issue) && !hasExplicitIssueTopic(issue));
   if (projects.length >= 2 && ambiguousFollowUp && !scope.explicit) {
     const projectList = projects.map((project) => `Project ${project}`).join(", ").replace(/, ([^,]*)$/, " atau $1");
     return {
@@ -183,7 +183,7 @@ export function fallback(issue: string, documents: KnowledgeDocument[], history:
 
   // Follow-up questions ("menurutmu kenapa?") carry no keywords of their own;
   // rank against the whole thread's user turns so context carries over.
-  const contextText = continuationSignal(issue)
+  const contextText = continuationSignal(issue, history)
     ? [...history.filter((message) => message.role === "user").slice(-3).map((message) => message.content), issue].join(" ")
     : issue;
   if (isSarcasticOrDismissive(issue)) {
@@ -216,7 +216,7 @@ export function fallback(issue: string, documents: KnowledgeDocument[], history:
     const supportedStatus = asksStatus && bestReply.length > 0;
     const supportedFollowUp = (asksTimeline && supportedTimeline) || supportedOwner || supportedStatus;
     const followUpContext = ranked[0] ? requiredContext(sourceLine(ranked[0].content, "Customer Action"), sourceLine(ranked[0].content, "Required Context")) : null;
-    const followUpQuery = continuationSignal(issue)
+    const followUpQuery = continuationSignal(issue, history)
       ? [...history.filter((message) => message.role === "user").slice(-3).map((message) => message.content), issue].join(" ")
       : issue;
     const followUpMissing = followUpContext ? missingContextMessage(followUpContext, followUpQuery) : null;
@@ -306,7 +306,7 @@ export function fallback(issue: string, documents: KnowledgeDocument[], history:
   const replyLine = sourceLine(best.content, "Customer Reply");
   const explicitContext = sourceLine(best.content, "Required Context");
   const context = requiredContext(actionLine, explicitContext);
-  const contextQuery = continuationSignal(issue)
+  const contextQuery = continuationSignal(issue, history)
     ? [...history.filter((message) => message.role === "user").slice(-3).map((message) => message.content), issue].join(" ")
     : issue;
   const missingContext = missingContextMessage(context, contextQuery);

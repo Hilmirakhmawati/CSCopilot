@@ -1,6 +1,6 @@
 import type { GroundedAnswer, KnowledgeDocument } from "./assistant-types";
 import { getSupabaseAdmin } from "./db";
-import { filterDocumentsByProject, historyForProject, resolveProjectScope } from "./project-scope";
+import { filterDocumentsByProject, historyForProject, isStandaloneProjectAlias, resolveProjectScope } from "./project-scope";
 
 // Short questions or ones that reference something already said ("itu", "nya")
 // carry no keywords of their own — only those get to borrow prior context.
@@ -20,7 +20,8 @@ function looksLikeBareIdentifier(word: string) {
 // elsewhere in the message, they still carry no new topic of their own.
 const identifierLabelWords = new Set(["nomor", "no", "id", "pesanan", "pesanannya", "order", "akun", "akunnya", "email"]);
 
-export function continuationSignal(query: string) {
+export function continuationSignal(query: string, history: Array<{ role: "user" | "assistant"; content: string }> = []) {
+  if (isStandaloneProjectAlias(query, history)) return true;
   const normalized = query.toLowerCase();
   const words = normalized.match(/[a-z0-9À-ɏ@.+-]+/g) ?? [];
   if (/\b(itu|nya|tersebut|ini|sebelumnya|barusan)\b/.test(normalized)) return true;
@@ -227,7 +228,7 @@ export function pointAnswer(
   documents: KnowledgeDocument[],
   history: Array<{ role: "user" | "assistant"; content: string }> = [],
 ): GroundedAnswer | null {
-  const contextQuery = continuationSignal(query)
+  const contextQuery = continuationSignal(query, history)
     ? [...history.filter((message) => message.role === "user").slice(-3).map((message) => message.content), query].join(" ")
     : query;
   const target = pointArticleTitle(contextQuery);
@@ -306,7 +307,7 @@ async function search(supabase: ReturnType<typeof getSupabaseAdmin>, query: stri
 export async function retrieveKnowledge(query: string, history: Array<{ role: "user" | "assistant"; content: string }> = []): Promise<KnowledgeDocument[]> {
   const supabase = getSupabaseAdmin();
   const priorUserText = history.filter((message) => message.role === "user").slice(-3).map((message) => message.content).join(" ");
-  const continuation = continuationSignal(query) && Boolean(priorUserText);
+  const continuation = continuationSignal(query, history) && Boolean(priorUserText);
   const combinedQuery = continuation ? `${priorUserText} ${query}` : query;
   const pointTarget = pointArticleTitle(combinedQuery);
   const pointTopic = isPointTopic(combinedQuery);
@@ -335,7 +336,7 @@ export async function retrieveKnowledge(query: string, history: Array<{ role: "u
   const targeted = selectPointArticle(targetResults, pointTarget);
   if (direct.length) return direct;
   if (targeted.length) return targeted;
-  if (!continuationSignal(query) || !priorUserText) return selectPointArticle(own, null);
+  if (!continuationSignal(query, history) || !priorUserText) return selectPointArticle(own, null);
 
   const priorSearch = scopeResults(await search(supabase, scopedCombinedQuery));
   return selectPointArticle(priorSearch, pointTarget);

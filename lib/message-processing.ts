@@ -120,8 +120,6 @@ async function processConversationMessageUnlocked(
   if (!ownerData) throw new Error("Conversation not found");
   const storedContext = (ownerData.active_context ?? {}) as ActiveContext;
   const contextSummary: string = ownerData.context_summary ?? "";
-  const continuation = continuationSignal(issue);
-
   const key = idempotencyKey && (await idempotencyReady(db)) ? idempotencyKey : undefined;
   if (key) {
     const existing = await db
@@ -153,6 +151,7 @@ async function processConversationMessageUnlocked(
     role: message.role as "user" | "assistant",
     content: message.content as string,
   }));
+  const continuation = continuationSignal(issue, history);
   // An explicit new topic supersedes the old one rather than blending with
   // it; the superseded topic leaves one line in the rolling summary so long
   // conversations keep a trail after it drops out of active context.

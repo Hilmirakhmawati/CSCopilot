@@ -375,6 +375,28 @@ if (process.argv[1]?.endsWith("assistant-check.ts")) {
   assert.equal(resolveProjectScope("Datanya sudah dicek, error muncul di modul export.", scopeHistory).project, "A");
   assert.equal(resolveProjectScope("Untuk Project B, laporan tidak muncul.", scopeHistory).project, "B");
   assert.equal(resolveProjectScope("Project Alpha Mobile: login gagal", []).project, "Alpha Mobile");
+  const inwanHistory = [
+    { role: "user" as const, content: "inwan aplikasi tidak bisa login sejak kemarin, muncul error invalid token" },
+    { role: "assistant" as const, content: "Mohon kirimkan detail tambahan." },
+  ];
+  assert.equal(resolveProjectScope("inwan aplikasi tidak bisa login", []).project, "inwan");
+  assert.equal(resolveProjectScope("inwan", inwanHistory).project, "inwan");
+  assert.equal(continuationSignal("inwan", inwanHistory), true);
+  assert.equal(resolveProjectScope("budi", inwanHistory).project, "inwan");
+  assert.equal(resolveProjectScope("Project B: export PDF bermasalah", inwanHistory).project, "B");
+  assert.equal(resolveProjectScope("inwan", [
+    ...inwanHistory,
+    { role: "user" as const, content: "Project B: export PDF bermasalah" },
+  ]).project, "B");
+  assert.equal(resolveProjectScope("inwan", [
+    ...inwanHistory,
+    { role: "user" as const, content: "Project B: export PDF bermasalah" },
+    { role: "user" as const, content: "Langkah sudah dicoba" },
+  ]).project, "B");
+  assert.equal(resolveProjectScope("apa yang harus dilakukan?", [
+    { role: "user" as const, content: "Project Inwan: aplikasi tidak bisa login, error invalid token" },
+    { role: "user" as const, content: "Project B: export PDF tidak muncul" },
+  ]).project, "B");
   assert.equal(filterDocumentsByProject([
     { id: "proyek-a", title: "Proyek A - Login", url: null, content: "Proyek A login", category: "proyek-a", synced_at: "" },
   ], "A").length, 1);
