@@ -4,6 +4,7 @@ import { POINT_ARTICLE_TITLE_MATCHES, continuationSignal, contextSatisfied, isSa
 import { activeContextForPrompt, trimHistoryToBudget, updateActiveContext } from "./context";
 import { readJson } from "./validation";
 import type { Citation, KnowledgeDocument } from "./assistant-types";
+import { filterDocumentsByProject, resolveProjectScope } from "./project-scope";
 
 const uuidPattern = "[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
 const sourceMarkerPattern = new RegExp(`(?:\\bSOURCE\\s+\\d+\\b|\\b(?:ID|TITLE|URL|CONTENT|SCORE|RELEVANCE|SIMILARITY)\\s*:)`, "i");
@@ -310,6 +311,25 @@ if (process.argv[1]?.endsWith("assistant-check.ts")) {
   assert.match(ambiguousProjectFollowUp.answer, /Project A.*Project B|Project B.*Project A/i);
   assert.equal(ambiguousProjectFollowUp.draft_reply, "");
   assert.equal(ambiguousProjectFollowUp.confidence, "low");
+
+  const scopeHistory = [
+    { role: "user" as const, content: "Kami sedang investigasi masalah di Project A terkait sinkronisasi data." },
+    { role: "assistant" as const, content: "Kami sedang memeriksa kasusnya." },
+  ];
+  assert.equal(resolveProjectScope("Datanya sudah dicek, error muncul di modul export.", scopeHistory).project, "A");
+  assert.equal(resolveProjectScope("Untuk Project B, laporan tidak muncul.", scopeHistory).project, "B");
+  assert.equal(resolveProjectScope("Bisa cek status untuk ini?", [
+    ...scopeHistory,
+    { role: "user" as const, content: "Project B juga ada kendala, beda kasus." },
+  ]).ambiguous, true);
+  const scoped = filterDocumentsByProject(
+    [
+      { id: "scope-a", title: "Project A login", url: null, content: "Project A login", category: "project-a", synced_at: "" },
+      { id: "scope-b", title: "Project B login", url: null, content: "Project B login", category: "project-b", synced_at: "" },
+    ],
+    "B",
+  );
+  assert.deepEqual(scoped.map((document) => document.id), ["scope-b"]);
 
   // A follow-up asking for timing must answer that intent, not repeat the
   // previous issue summary when the source has no SLA/timeline.
