@@ -351,7 +351,7 @@ export async function generateGroundedAnswer(issue: string, documents: Knowledge
   const modelHistory = scope.project ? historyForProject(history, scope.project) : history;
   const deterministicPointAnswer = pointAnswer(issue, scopedDocuments, modelHistory);
   if (deterministicPointAnswer) return deterministicPointAnswer;
-  if (!configuredApiKey() || process.env.CSCOPILOT_NO_AI === "1") return fallback(issue, scopedDocuments, history);
+  if (!scopedDocuments.length || !configuredApiKey() || process.env.CSCOPILOT_NO_AI === "1") return fallback(issue, scopedDocuments, modelHistory);
   const context = scopedDocuments.map((doc, index) => `REFERENCE ${index + 1}\nCONTENT:\n${doc.content}`).join("\n\n");
   let response;
   try {
@@ -414,7 +414,7 @@ Do not invent facts not supported by the knowledge context or conversation.`
     return fallback(issue, scopedDocuments, history);
   }
   const citations = mapCitations(parsed.citations, scopedDocuments);
-  const grounded = citations.length > 0 || scopedDocuments.length === 0;
+  const grounded = citations.length === parsed.citations.length && citations.length > 0;
   return enforceMissingContextInvariant({
     ...parsed,
     citations,
