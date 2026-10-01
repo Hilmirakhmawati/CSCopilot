@@ -24,18 +24,20 @@ export function continuationSignal(query: string, history: Array<{ role: "user" 
   if (
     isStandaloneProjectAlias(query, history) ||
     isFeedbackMessage(query) ||
-    isClosingMessage(query) ||
     isDraftRegenerationRequest(query) ||
     isDraftFeedbackMessage(query) ||
     isDraftGreetingEdit(query) ||
     isSuppliedContextMessage(query) ||
+    isAccountLabelOnly(query) ||
+    isOrderLabelOnly(query) ||
+    isCaseUpdate(query) ||
     isGuidanceFollowUp(query)
   ) return true;
   const normalized = query.toLowerCase();
   const words = normalized.match(/[a-z0-9À-ɏ@.+-]+/g) ?? [];
   if (/\b(itu|nya|tersebut|ini|sebelumnya|barusan)\b/.test(normalized)) return true;
   if (words.length > 0 && words.every((word) => looksLikeBareIdentifier(word) || identifierLabelWords.has(word)) && words.some((word) => looksLikeBareIdentifier(word))) return true;
-  return words.length <= 3 && words.every((word) => followUpWords.has(word));
+  return words.length > 0 && words.length <= 3 && words.every((word) => followUpWords.has(word));
 }
 
 // Best-effort recognition of common Indonesian sarcastic/dismissive
@@ -46,7 +48,7 @@ export function continuationSignal(query: string, history: Array<{ role: "user" 
 // sarcastic reaction as a literal statement worth keyword-ranking against a
 // document — the message still gets a clarifying question, same as a
 // genuine zero-match case.
-const sarcasticMarkers = /\b(yaelah|ya\s+ampun|halah|ish|duh|terserah|yah\s+gitu\s+deh|gitu\s+doang)\b/i;
+const sarcasticMarkers = /\b(yaelah|ya\s+ampun|halah|ish|duh|terserah|yah\s+gitu\s+deh|gitu\s+doang|itu\s+aja)\b/i;
 const ironicPraise = /\b(bagus|keren|mantap|hebat)\s+(banget|sekali)\b.{0,60}\b(error|gagal|rusak|lemot|lambat|nge-?lag|ngadat|macet)\b|\b(error|gagal|rusak|lemot|lambat|nge-?lag|ngadat|macet)\b.{0,60}\b(bagus|keren|mantap|hebat)\s+(banget|sekali)\b/i;
 
 export function isSarcasticOrDismissive(query: string) {
@@ -57,7 +59,10 @@ const feedbackMarkers = /(?:ya\s+terus\s+gimana\s+dong|masa\s+cuma\s+itu|masih\s
 const draftRegenerationMarkers = /\b(?:buat(?:kan)?|generate|regenerasi|alternatif|lainnya|baru)\b[\s\w-]{0,40}\b(?:draft|balasan)\b|\b(?:draft|balasan)\b[\s\w-]{0,40}\b(?:lainnya|alternatif|baru)\b/i;
 const draftFeedbackMarkers = /\b(?:draft|balasan)\b[\s\w-]{0,30}\b(?:belum\s+sesuai|kurang|tidak\s+sesuai)\b/i;
 const greetingEditMarkers = /\b(?:kurang|tambah(?:kan)?)\b[\s\w-]{0,20}\b(?:isi\s+)?sapaan\b|\b(?:sapaan|salam)\b.*\b(?:kurang|tambah(?:kan)?)\b/i;
-const suppliedContextMarkers = /\b(?:ini|berikut)\s+(?:akun|akunnya|account|nomor\s+(?:pesanan|order|akun)|email)\b|\b(?:akun|akunnya|account|nomor\s+(?:pesanan|order|akun)|email)\s*[:#-]?\s*(?:\d{6,}|[\w.+-]+@[\w.-]+\.[a-z]{2,})/i;
+const suppliedContextMarkers = /\b(?:ini|berikut)\s+(?:akun(?:n?ya)?|account|nom[eo]r\s+(?:pesanan|order|akun)|email)\b|\b(?:akun(?:n?ya)?|account|id\s+akun|nom[eo]r\s+(?:pesanan|order|akun)|email)\s*[:#-]?\s*(?:\d{6,}|[\w.+-]+@[\w.-]+\.[a-z]{2,})/i;
+const accountIdentifierPattern = /\b(?:akun(?:n?ya)?|account|id\s+akun|nom[eo]r\s+akun)\b[^.!?\n]{0,100}?\b\d{6,}\b/i;
+const accountLabelOnlyPattern = /\b(?:akun(?:n?ya)?|account|id\s+akun|nom[eo]r\s+akun(?:n?ya)?)\b/i;
+const orderLabelOnlyPattern = /\b(?:pesanan(?:nya)?|order|nom[eo]r\s+(?:pesanan|order)|id\s+(?:pesanan|order))\b/i;
 const guidanceFollowUpMarkers = /\b(?:apa\s+saran|saran\s+(?:apa|yang)|yang\s+bisa\s+(?:aku|saya|kami)\s+(?:kasih|sampaikan))\b[\s\w-]{0,50}\b(?:client|customer)\b/i;
 
 export function isFeedbackMessage(query: string) {
@@ -72,6 +77,7 @@ export type ConversationIntent =
   | "draft_edit"
   | "supplied_context"
   | "guidance_follow_up"
+  | "case_update"
   | "follow_up"
   | "acknowledgement";
 
@@ -89,7 +95,30 @@ export function isDraftGreetingEdit(query: string) {
 
 export function isSuppliedContextMessage(query: string) {
   const hasIdentifier = /\b\d{6,}\b|[\w.+-]+@[\w.-]+\.[a-z]{2,}/i.test(query);
-  return hasIdentifier && suppliedContextMarkers.test(query);
+  return hasIdentifier && (suppliedContextMarkers.test(query) || accountIdentifierPattern.test(query));
+}
+
+export function isAccountLabelOnly(query: string) {
+  const normalized = query.toLowerCase().trim().replace(/[.!?,]+$/g, "").replace(/\s+/g, " ");
+  return normalized.length <= 24 &&
+    /^(?:(?:no\.?|nom[eo]r)\s+akun(?:n?ya)?|akun(?:n?ya)?(?:\s+(?:ya|ini|itu))?|account(?:\s+(?:ya|ini|itu))?|id\s+akun|(?:itu|ini)\s+(?:no\.?|nom[eo]r)?\s*akun)$/.test(normalized) &&
+    accountLabelOnlyPattern.test(normalized);
+}
+
+// "no pesanan" after a bare number labels that number as an order number.
+export function isOrderLabelOnly(query: string) {
+  const normalized = query.toLowerCase().trim().replace(/[.!?,]+$/g, "").replace(/\s+/g, " ");
+  return normalized.length <= 24 &&
+    /^(?:(?:no\.?|nom[eo]r|id)\s+(?:pesanan|order)(?:nya)?|(?:pesanan|order)(?:nya)?(?:\s+(?:ya|ini|itu))?|(?:itu|ini)\s+(?:(?:no\.?|nom[eo]r)\s+)?(?:pesanan|order)(?:nya)?)$/.test(normalized) &&
+    orderLabelOnlyPattern.test(normalized);
+}
+
+// CS reporting a check they did themselves ("sudah saya cek ..."). Only this
+// phrasing counts; the AI never produces such results.
+const caseUpdateMarkers = /\b(?:sudah|udah|telah)\s+(?:saya|aku|kami|gue)\s+(?:cek|periksa)\b|\bhasil(?:nya)?\s+(?:cek|pengecekan|pemeriksaan)\b/i;
+
+export function isCaseUpdate(query: string) {
+  return caseUpdateMarkers.test(query);
 }
 
 export function isGuidanceFollowUp(query: string) {
@@ -107,6 +136,7 @@ export function classifyConversationIntent(
   if (isDraftFeedbackMessage(query) && currentDraft) return "draft_feedback";
   if (isSuppliedContextMessage(query)) return "supplied_context";
   if (isGuidanceFollowUp(query)) return "guidance_follow_up";
+  if (isCaseUpdate(query)) return "case_update";
   if (isFeedbackMessage(query)) return "feedback";
   if (continuationSignal(query, history)) return "follow_up";
   return "new_issue";
@@ -121,12 +151,11 @@ export function isClosingMessage(query: string) {
 
 const greetingRoots = [
   "hi", "hello", "hallo", "halo", "hai", "hey", "helo", "yo", "sup",
-  "hola", "ciao", "bonjour", "namaste", "salut", "assalamualaikum", "good", "whats", "up",
+  "hola", "ciao", "bonjour", "namaste", "salut", "good", "whats", "up",
+  "permisi", "punten", "salam", "shalom", "met",
 ];
-const greetingFillers = new Set(["kak", "min", "admin", "ya", "nih", "dong", "there", "everyone", "guys"]);
-const timeGreetings = new Set(["pagi", "siang", "sore", "malam", "morning", "afternoon", "evening", "night"]);
-const greetingStopWords = new Set(["apa", "kabar", "how", "are", "you", "is"]);
-const issueWords = /\b(bayar|pembayaran|gagal|error|kenapa|bagaimana|gimana|tolong|help|order|pesanan|akun|refund|masalah|issue|kendala|customer|saldo|poin|point|tidak|bisa|cara|status|cek|check)\b/i;
+const timeGreetings = new Set(["pagi", "siang", "sore", "petang", "malam", "morning", "afternoon", "evening", "night"]);
+const issueWords = /\b(bayar|pembayaran|gagal|error|kenapa|bagaimana|gimana|tolong|help|mau|tanya|minta|lupa|login|password|lapor|komplain|kirim|request|order|pesanan|akun|refund|masalah|issue|kendala|customer|saldo|poin|point|tidak|bisa|cara|status|cek|check)\b/i;
 
 function normalizeGreeting(query: string) {
   return query
@@ -160,20 +189,37 @@ function resemblesGreetingToken(token: string) {
   return greetingRoots.some((root) => token === root || editDistance(token, root) <= (root.length <= 4 ? 1 : 2));
 }
 
+function greetingLeadLength(rawTokens: string[]) {
+  // "pagiii" -> trailing repeated letters collapse to the time word.
+  const tokens = rawTokens.map((token) => (timeGreetings.has(token) ? token : token.replace(/(.)\1+$/, "$1")));
+  const [first, second] = tokens;
+  if (!first) return 0;
+  if (first.startsWith("assalam") || first.startsWith("asalam") || first === "shalom") return 1;
+  if (first === "selamat") return second && (timeGreetings.has(second) || second === "datang" || second === "hari") ? 2 : 0;
+  if (first === "apa" && second === "kabar") return 2;
+  if (first === "whats" && second === "up") return 2;
+  if (first === "good" && second && timeGreetings.has(second)) return 2;
+  if (timeGreetings.has(first) || resemblesGreetingToken(first)) return 1;
+  return 0;
+}
+
 export function isGreetingOnly(query: string) {
-  const normalized = normalizeGreeting(query);
+  const raw = query.trim();
+  if (/^(?:\p{Extended_Pictographic}|\s)+$/u.test(raw)) return true;
+  if (!raw || /[?¿]/.test(raw) || /\d/.test(raw)) return false;
+  const normalized = normalizeGreeting(raw);
   if (!normalized || normalized.length > 48 || issueWords.test(normalized)) return false;
   const tokens = normalized.split(" ");
   if (tokens.length > 6) return false;
-  const hasGreeting = tokens.some((token) => resemblesGreetingToken(token) || timeGreetings.has(token));
-  if (!hasGreeting) return false;
-  return tokens.every((token) => resemblesGreetingToken(token) || timeGreetings.has(token) || greetingFillers.has(token) || greetingStopWords.has(token));
+  const leadLength = greetingLeadLength(tokens);
+  if (!leadLength) return false;
+  return tokens.slice(leadLength).length <= 3;
 }
 
 export function greetingAnswer(query: string, history: Array<{ role: "user" | "assistant"; content: string }> = []): GroundedAnswer {
   const normalized = query.toLowerCase();
   const english = /\b(hi|hello|hey|good\s+(morning|afternoon|evening)|what(?:'|’)s\s+up)\b/.test(normalized) && !/\b(halo|hai|pagi|siang|sore|malam|selamat|apa\s+kabar)\b/.test(normalized);
-  const current = english ? "Hi! 👋" : /\b(pagi|selamat pagi)\b/.test(normalized) ? "Selamat pagi! 👋" : /\b(siang|selamat siang)\b/.test(normalized) ? "Selamat siang! 👋" : /\b(sore|selamat sore)\b/.test(normalized) ? "Selamat sore! 👋" : /\b(malam|selamat malam)\b/.test(normalized) ? "Selamat malam! 👋" : "Halo! 👋";
+  const current = english ? "Hi! 👋" : /\b(pagi|selamat pagi)\b/.test(normalized) ? "Selamat pagi! 👋" : /\b(siang|selamat siang)\b/.test(normalized) ? "Selamat siang! 👋" : /\b(sore|petang|selamat sore|selamat petang)\b/.test(normalized) ? "Selamat sore! 👋" : /\b(malam|selamat malam)\b/.test(normalized) ? "Selamat malam! 👋" : "Halo! 👋";
   const hasTopic = history.some((message) => message.role === "user");
   const answer = hasTopic ? `${current} Kita lanjut bahas topik tadi ya. Ada yang ingin kamu tanyakan lagi?` : english ? `${current} What would you like to know?` : `${current} Ada yang mau kamu tanyakan?`;
   return { intent: "Greeting", summary: "The user sent a greeting.", missing_context: [], recommended_action: "Invite the user to share their question or issue.", answer, draft_reply: answer, citations: [], confidence: "high" };
@@ -248,21 +294,43 @@ export function sourceLine(content: string, label: string) {
 export function requiredContext(action: string, explicit: string) {
   const value = `${explicit} ${action}`.toLowerCase();
   const hasOrder = /\b(nomor pesanan|nomor order|order id|id pesanan)\b/.test(value);
-  const hasAccount = /\b(nomor akun|id akun|email akun)\b/.test(value);
+  const hasAccount = /\b(nomor akun|id akun|email akun|akun customer|akun pelanggan)\b/.test(value);
   if (hasOrder && hasAccount) return "nomor akun atau nomor pesanan terkait";
   if (hasOrder) return "nomor pesanan terkait";
   if (hasAccount) return "nomor atau email akun terkait";
   return null;
 }
 
+export type SuppliedIdentifier = {
+  kind: "account" | "order" | "email" | "unknown";
+  value: string;
+};
+
+export function suppliedIdentifier(query: string): SuppliedIdentifier | null {
+  const email = query.match(/[\w.+-]+@[\w.-]+\.[a-z]{2,}/i)?.[0];
+  if (email) return { kind: "email", value: email };
+
+  const labeledAccount = query.match(/\b(?:akun(?:n?ya)?|account|id\s+akun|nom[eo]r\s+akun)\b[^.!?\n]{0,100}?\b(\d{6,})\b/i)?.[1];
+  if (labeledAccount) return { kind: "account", value: labeledAccount };
+
+  const labeledOrder = query.match(/\b(?:nomor|no\.?|id)?\s*(?:pesanan|order)\b[^.!?\n]{0,100}?\b(\d{6,})\b/i)?.[1];
+  if (labeledOrder) return { kind: "order", value: labeledOrder };
+
+  // Number first, label after: "1617399381803 ini no pesanannya".
+  const orderAfter = query.match(/\b(\d{6,})\b[^.!?\n]{0,40}?\b(?:nom[eo]r\s+|no\.?\s+|id\s+)?(?:pesanan|order)(?:nya)?\b/i)?.[1];
+  if (orderAfter) return { kind: "order", value: orderAfter };
+
+  const bare = query.match(/\b\d{6,}\b/)?.[0];
+  return bare ? { kind: "unknown", value: bare } : null;
+}
+
 export function contextSatisfied(context: string | null, query: string) {
   if (!context) return true;
-  const hasOrder = /\b\d{6,}\b/.test(query);
-  const hasLabeledAccount = /(?:\b(?:akun|account)(?:\s+(?:id|number|nomor))?\s*[:#-]?\s*\d{6,}|\b(?:id|nomor)\s+akun\s*[:#-]?\s*\d{6,}|\b\d{6,}\s+(?:akun|account)\b)/i.test(query);
-  const hasEmail = /[\w.+-]+@[\w.-]+\.[a-z]{2,}/i.test(query);
-  if (context === "nomor pesanan terkait") return hasOrder;
-  if (context === "nomor atau email akun terkait") return hasEmail || hasLabeledAccount;
-  if (context === "nomor akun atau nomor pesanan terkait") return hasOrder || hasEmail || hasLabeledAccount;
+  const identifier = suppliedIdentifier(query);
+  if (!identifier) return false;
+  if (context === "nomor pesanan terkait") return identifier.kind === "order" || identifier.kind === "unknown";
+  if (context === "nomor atau email akun terkait") return identifier.kind === "account" || identifier.kind === "email";
+  if (context === "nomor akun atau nomor pesanan terkait") return identifier.kind !== "unknown";
   return false;
 }
 
@@ -287,6 +355,14 @@ export function addDraftGreeting(value: string) {
   return `Halo Kak, ${value.trim()}`;
 }
 
+// Notion Customer Reply often already opens with the standard thank-you.
+export function withThanksGreeting(reply: string) {
+  const text = reply.trim();
+  return /^(?:terima kasih|halo|hai|hello|hi|selamat\s+(?:pagi|siang|sore|malam))\b/i.test(text)
+    ? text
+    : `Terima kasih sudah menghubungi kami. ${text}`;
+}
+
 export function reviseCustomerDraft(sourceReply: string, intent: ConversationIntent, currentDraft = "") {
   const source = sourceReply.trim();
   if (!source) return "";
@@ -305,7 +381,29 @@ function suppliedContextReply(reply: string, context: string, query: string) {
   const issue = /\b(saldo|poin|point)\b.*\b(0|nol|kosong)\b|\b(0|nol|kosong)\b.*\b(saldo|poin|point)\b/i.test(query)
     ? "saldo poin yang tampil 0"
     : "kasus ini";
-  return `Terima kasih, ${label} sudah kami terima. Tim kami akan memeriksa ${issue} dan memverifikasi data terkait.`;
+  return `Terima kasih, ${label} sudah kami terima. Kami akan membantu mengecek ${issue}, lalu menginformasikan hasilnya.`;
+}
+
+function suppliedIdentifierClarification(context: string | null) {
+  if (context === "nomor akun atau nomor pesanan terkait") return "Nomor sudah diterima. Mohon pastikan, itu nomor akun atau nomor pesanan?";
+  if (context === "nomor atau email akun terkait") return "Nomor dicatat sebagai info case. Mohon pastikan itu nomor akun.";
+  return "Nomor dicatat sebagai info case. Mohon pastikan nomor tersebut benar.";
+}
+
+function topicClarification() {
+  return "Boleh diperjelas, bagian mana dari topik poin sebelumnya yang masih kurang jelas, atau apakah ini pertanyaan baru?";
+}
+
+function suppliedContextAnswer(context: string, query: string) {
+  const label = context === "nomor pesanan terkait"
+    ? "nomor pesanan"
+    : context === "nomor atau email akun terkait"
+      ? "akun"
+      : "akun atau nomor pesanan";
+  const issue = /\b(saldo|poin|point)\b.*\b(0|nol|kosong)\b|\b(0|nol|hilang|kosong)\b.*\b(saldo|poin|point)\b/i.test(query)
+    ? "saldo poin yang tampil 0"
+    : "kasus ini";
+  return `Informasi ${label} sudah diterima sebagai info case. CS dapat mengecek ${issue} melalui langkah pada knowledge base sebelum memberi kabar ke customer.`;
 }
 
 export function pointAnswer(
@@ -355,8 +453,40 @@ export function pointAnswer(
   }
 
   const context = requiredContext(action, explicitContext);
-  const missingContext = missingContextMessage(context, contextQuery);
+  const identifier = suppliedIdentifier(query);
+  const priorUserMessages = history.filter((message) => message.role === "user");
+  const latestPointIndex = [...priorUserMessages].reverse().findIndex((message) => isPointTopic(message.content));
+  const currentPointHistory = latestPointIndex === -1
+    ? []
+    : priorUserMessages.slice(priorUserMessages.length - latestPointIndex - 1);
+  const confirmedPriorNumber = isAccountLabelOnly(query)
+    ? [...currentPointHistory].reverse().find((message) => {
+      const kind = suppliedIdentifier(message.content)?.kind;
+      return kind === "unknown" || kind === "account";
+    })
+    : undefined;
+  const identifierIsAmbiguous = Boolean(identifier?.kind === "unknown" && (context === "nomor akun atau nomor pesanan terkait" || context === "nomor atau email akun terkait"));
+  const missingContext = identifierIsAmbiguous ? suppliedIdentifierClarification(context) : missingContextMessage(context, contextQuery);
   const missingContextItems = missingContext ? [missingContext] : [];
+  const contextWasSupplied = Boolean(identifier && !identifierIsAmbiguous && contextSatisfied(context, query));
+  const accountConfirmation = Boolean(confirmedPriorNumber && (context === "nomor atau email akun terkait" || context === "nomor akun atau nomor pesanan terkait"));
+  const orderConfirmation = Boolean(
+    isOrderLabelOnly(query) &&
+    (context === "nomor pesanan terkait" || context === "nomor akun atau nomor pesanan terkait") &&
+    [...currentPointHistory].reverse().some((message) => suppliedIdentifier(message.content)?.kind === "unknown"),
+  );
+  if (isSarcasticOrDismissive(query) && currentPointHistory.length > 0) {
+    return {
+      intent: "Needs clarification",
+      summary: "Klarifikasi diperlukan terkait topik poin.",
+      missing_context: ["Klarifikasi diperlukan terkait topik yang sedang dibahas."],
+      recommended_action: "Minta CS menjelaskan bagian topik poin yang masih kurang jelas atau memastikan apakah ada pertanyaan baru.",
+      answer: topicClarification(),
+      draft_reply: "",
+      citations,
+      confidence: "low",
+    };
+  }
   // Customer Action is an internal instruction to the agent, never a reply
   // to send verbatim. Without an explicit Customer Reply field, the app
   // must not invent customer-facing wording from it.
@@ -376,17 +506,43 @@ export function pointAnswer(
   const draft = intent === "draft_regeneration" || intent === "draft_feedback" || intent === "draft_edit"
     ? reviseCustomerDraft(reply, intent, currentDraft)
     : missingContextItems.length
-      ? `${reply}.`
+      ? identifierIsAmbiguous ? "" : `${reply}.`
       : suppliedContextReply(reply, context ?? "", contextQuery);
+  if (intent === "case_update" && !missingContextItems.length) {
+    return {
+      intent: "Case update",
+      summary,
+      missing_context: [],
+      recommended_action: action,
+      answer: "Hasil cek dicatat sebagai laporan dari CS, belum diverifikasi sistem. Lanjutkan sesuai langkah dan kriteria eskalasi pada knowledge base.",
+      draft_reply: "Terima kasih atas informasinya. Kasus ini akan kami tindaklanjuti dan kami kabari perkembangannya.",
+      citations,
+      confidence: "medium",
+    };
+  }
+  const confirmed = accountConfirmation || orderConfirmation;
+  const currentTurnAnswer = identifierIsAmbiguous
+    ? suppliedIdentifierClarification(context)
+    : accountConfirmation
+      ? "Nomor tersebut dicatat sebagai nomor akun. Berdasarkan knowledge base, CS dapat mengecek saldo poin melalui riwayat poin dan transaksi terkait."
+      : orderConfirmation
+        ? "Nomor tersebut dicatat sebagai nomor pesanan. Berdasarkan knowledge base, CS dapat mengecek saldo poin melalui riwayat poin dan transaksi terkait."
+        : contextWasSupplied
+          ? suppliedContextAnswer(context ?? "", query)
+          : `${summary}.`;
   return {
-    intent: intent === "guidance_follow_up" ? "Customer guidance" : "Point support issue",
+    intent: intent === "guidance_follow_up" ? "Customer guidance" : confirmed || contextWasSupplied ? "Identifier received" : "Point support issue",
     summary,
-    missing_context: missingContextItems,
+    missing_context: confirmed ? [] : missingContextItems,
     recommended_action: action,
-    answer: `${summary}.`,
-    draft_reply: draft,
+    answer: currentTurnAnswer,
+    draft_reply: accountConfirmation
+      ? "Terima kasih, nomor akun sudah kami terima. Kami akan membantu mengecek saldo poin melalui riwayat poin dan transaksi terkait, lalu menginformasikan hasilnya."
+      : orderConfirmation
+        ? "Terima kasih, nomor pesanan sudah kami terima. Kami akan membantu mengecek saldo poin melalui riwayat poin dan transaksi terkait, lalu menginformasikan hasilnya."
+        : draft,
     citations,
-    confidence: "high",
+    confidence: confirmed || !missingContextItems.length ? "high" : "low",
   };
 }
 

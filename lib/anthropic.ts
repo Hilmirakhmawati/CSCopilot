@@ -1,8 +1,9 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { GroundedAnswer, KnowledgeDocument } from "./assistant-types";
-import { classifyConversationIntent, continuationSignal, greetingAnswer, isClosingMessage, isCustomerContextRequest, isFeedbackMessage, isGreetingOnly, isPointTopic, isSarcasticOrDismissive, missingContextMessage, pointAnswer, requiredContext, reviseCustomerDraft, sourceLine } from "./retrieval";
+import { classifyConversationIntent, continuationSignal, greetingAnswer, isClosingMessage, isCustomerContextRequest, isFeedbackMessage, isGreetingOnly, isPointTopic, isSarcasticOrDismissive, missingContextMessage, pointAnswer, requiredContext, reviseCustomerDraft, sourceLine, withThanksGreeting } from "./retrieval";
 import { withRetry } from "./retry";
-import { enforceMissingContextInvariant } from "./assistant-check";
+import { enforceMissingContextInvariant, sanitizeAnswer } from "./answer-safety";
+import { buildGuidance } from "./case-guidance";
 import { filterDocumentsByProject, historyForProject, resolveProjectScope } from "./project-scope";
 
 const DEFAULT_MODEL = "claude-sonnet-5";
@@ -244,7 +245,7 @@ export function fallback(issue: string, documents: KnowledgeDocument[], history:
         missing_context: [],
         recommended_action: "Use the supported timeline or ownership wording from the cited knowledge.",
         answer: bestReply,
-        draft_reply: `Terima kasih sudah menghubungi kami. ${bestReply}`,
+        draft_reply: withThanksGreeting(bestReply),
         citations: [{ document_id: ranked[0].id, title: ranked[0].title, url: ranked[0].url, quote: ranked[0].content.slice(0, 240) }],
         confidence: "medium",
       };
@@ -331,16 +332,21 @@ export function fallback(issue: string, documents: KnowledgeDocument[], history:
     ...(missingContext ? [missingContext] : []),
     ...(!replyLine ? ["Artikel ini belum memiliki field Customer Reply. Tinjau dan lengkapi di Notion sebelum draft dapat dibuat otomatis."] : []),
   ];
-  const answer = summaryLine ? `Kemungkinan penyebab: ${summaryLine}.` : "Kami sedang meninjau kendala yang disampaikan dan akan memverifikasi penanganan yang sesuai.";
+  const answer = summaryLine ? `Kemungkinan penyebab: ${summaryLine}.` : "Knowledge yang tersedia belum menjelaskan penyebab kendala ini. Kasus perlu diverifikasi secara manual oleh CS.";
+  const continuation = continuationSignal(issue, history);
+  const suppliedDetails = continuation && /\b(?:akun|akunnya|account|nomor\s+akun|pesanan|order|email)\b/i.test(issue);
+  const currentTurnAnswer = suppliedDetails
+    ? "Informasi yang diberikan dicatat sebagai info case. Kasus ini perlu diverifikasi secara manual oleh CS sesuai knowledge yang tersedia."
+    : answer;
   return {
-    intent: intent === "guidance_follow_up" ? "Customer guidance" : "Support issue",
+    intent: intent === "guidance_follow_up" ? "Customer guidance" : suppliedDetails ? "Identifier received" : "Support issue",
     summary: `Kemungkinan penyebab dari: ${best.title}.`,
     missing_context: missing,
     recommended_action: actionLine || "Review the cited knowledge and confirm it applies to this customer's case before responding.",
-    answer,
+    answer: currentTurnAnswer,
     draft_reply: missing.length
-      ? (replyLine && isCustomerContextRequest(replyLine) ? `Terima kasih sudah menghubungi kami. ${replyLine}` : "")
-      : `Terima kasih sudah menghubungi kami. ${replyLine}`,
+      ? (replyLine && isCustomerContextRequest(replyLine) ? withThanksGreeting(replyLine) : "")
+      : withThanksGreeting(replyLine),
     citations,
     confidence: missing.length ? "low" : "medium",
     ...(missing.length ? { knowledge_gap: true } : {}),
@@ -357,12 +363,19 @@ Notion sources are the only authority for company-specific claims. Use only supp
 Treat source metadata as internal evidence only. Never copy SOURCE labels, IDs, UUIDs, titles, URLs, scores, or metadata into answer or draft_reply. Put source IDs only in structured citations.
 Only put something in missing_context if the customer's message truly lacks it and the agent cannot proceed without it. Never list information already provided (order number, account, error message, etc.) or "nice to have" details. Routine manual verification steps that the agent always performs as part of the SOP (checking a database, confirming a balance) belong in recommended_action, not missing_context — missing_context is only for what the customer still needs to supply.
 Never invent policies, refunds, timelines, credentials, or troubleshooting steps.
+You have NO access to any database, API, account, order, or production system. Never say or imply that you or "our team" have checked, are checking, or will check an account/order, and never state account data (balance, status, history). Account/order numbers, error messages, and attachments supplied by the agent are unverified case information: acknowledge them as "dicatat sebagai info case", never as verified. In answer and recommended_action, phrase verification as a step the agent (CS) can take, using only steps present in the cited sources (e.g. "perlu diverifikasi melalui riwayat poin"). If the sources contain no checking steps, say so instead of inventing them. In draft_reply, describe checks as upcoming ("akan kami bantu cek") and never as completed ("sudah dicek", "sudah dikembalikan", "sudah diperbaiki") unless the agent explicitly reported that result.
 Every supported company-specific claim needs a citation using the REFERENCE number it came from.
-Clarification Flow: before answering, check whether the issue plus the supplied history and sources are actually enough to give a grounded, specific reply. If not, do not guess — set missing_context to what is still needed, put ONE short, specific question in answer (e.g. ask for the exact error message or order number, not "can you give more details?"). Leave draft_reply empty unless the cited Customer Reply is itself a safe, customer-facing request for the missing identifier; in that exception, preserve that request as the draft. Set confidence to "low" when clarification is needed. Never ask again for something the customer or agent already stated earlier in the history. If the message is ambiguous, indirect ("itu", "yang tadi", "masih sama"), or sarcastic, first try to resolve it from the conversation history; only ask a clarifying question if it genuinely cannot be resolved that way. If the conversation is discussing more than one distinct issue, identify which one the current message is about; if that itself is unclear, ask which issue it refers to instead of mixing information between them.
+Clarification Flow: before answering, check whether the issue plus the supplied history and sources are actually enough to give a grounded, specific reply. If not, do not guess — set missing_context to what is still needed, put ONE short, specific question in answer (e.g. ask for the exact error message or order number, not "can you give more details?"). Leave draft_reply empty unless the cited Customer Reply is itself a safe, customer-facing request for the missing identifier; in that exception, preserve that request as the draft. Set confidence to "low" when clarification is needed. Never ask again for something the customer or agent already stated earlier in the history. If the message is ambiguous, indirect ("itu", "yang tadi", "masih sama"), or sarcastic, first try to resolve it from the conversation history; only ask a clarifying question if it genuinely cannot be resolved that way. If the conversation is discussing more than one distinct issue, identify which one the current message is about; if that itself is unclear, ask which issue it refers to instead of mixing information between them. When the current message supplies an account/order number or email, answer that current turn with a concise acknowledgement and next verification step; do not repeat the previous issue summary as if the identifier was not received. Never infer whether an unlabeled number is an account or order when the active source requires that distinction; ask the user to label it.
 Produce an editable customer-facing draft, never send it, and never claim it was sent. Draft regeneration or feedback must revise the supplied CURRENT DRAFT using only the active source's Customer Reply. A greeting edit must preserve the draft body and add one greeting only. A supplied customer identifier satisfies the matching Required Context; do not repeat the request or expose the identifier in the draft. A customer-guidance follow-up should answer the active topic using Customer Safe Summary and Customer Action as internal guidance, while using only Customer Reply for customer-facing wording. Never copy Customer Action into draft_reply.
 Return JSON matching the requested schema.`;
 
+// Guidance (steps, case understanding, knowledge status) is derived from the
+// cited article only, for every path, so the model never writes it.
 export async function generateGroundedAnswer(issue: string, documents: KnowledgeDocument[], history: Array<{ role: "user" | "assistant"; content: string }> = [], contextSummary = "", currentDraft = ""): Promise<GroundedAnswer> {
+  return buildGuidance(await generateBaseAnswer(issue, documents, history, contextSummary, currentDraft), documents, issue, history);
+}
+
+async function generateBaseAnswer(issue: string, documents: KnowledgeDocument[], history: Array<{ role: "user" | "assistant"; content: string }> = [], contextSummary = "", currentDraft = ""): Promise<GroundedAnswer> {
   if (isGreetingOnly(issue)) return greetingAnswer(issue, history);
   if (isClosingMessage(issue)) return fallback(issue, documents, history, currentDraft);
   const scope = resolveProjectScope(issue, history);
@@ -370,8 +383,8 @@ export async function generateGroundedAnswer(issue: string, documents: Knowledge
   const scopedDocuments = scope.project ? filterDocumentsByProject(documents, scope.project) : documents;
   const modelHistory = scope.project ? historyForProject(history, scope.project) : history;
   const deterministicPointAnswer = pointAnswer(issue, scopedDocuments, modelHistory, currentDraft);
-  if (deterministicPointAnswer) return deterministicPointAnswer;
-  if (!scopedDocuments.length || !configuredApiKey() || process.env.CSCOPILOT_NO_AI === "1") return fallback(issue, scopedDocuments, modelHistory, currentDraft);
+  if (deterministicPointAnswer) return sanitizeAnswer(deterministicPointAnswer);
+  if (!scopedDocuments.length || !configuredApiKey() || process.env.CSCOPILOT_NO_AI === "1") return sanitizeAnswer(fallback(issue, scopedDocuments, modelHistory, currentDraft));
   const context = scopedDocuments.map((doc, index) => `REFERENCE ${index + 1}\nCONTENT:\n${doc.content}`).join("\n\n");
   let response;
   try {
@@ -412,7 +425,7 @@ Do not invent facts not supported by the knowledge context or conversation.`
 ],
     } as never));
   } catch (error) {
-    if (isUnavailableAnthropicError(error)) return fallback(issue, scopedDocuments, history, currentDraft);
+    if (isUnavailableAnthropicError(error)) return sanitizeAnswer(fallback(issue, scopedDocuments, history, currentDraft));
     throw error;
   }
   if ((response as { stop_reason?: string }).stop_reason === "refusal") throw new Error("Claude refused this request");
@@ -427,11 +440,11 @@ Do not invent facts not supported by the knowledge context or conversation.`
     // A malformed model response must not break the support workflow. The
     // deterministic answer still uses only the retrieved customer-safe fields.
     console.warn("Claude returned non-JSON output; using grounded fallback");
-    return fallback(issue, scopedDocuments, history, currentDraft);
+    return sanitizeAnswer(fallback(issue, scopedDocuments, history, currentDraft));
   }
   if (!isModelAnswer(parsed)) {
     console.warn("Claude returned an unexpected schema; using grounded fallback");
-    return fallback(issue, scopedDocuments, history, currentDraft);
+    return sanitizeAnswer(fallback(issue, scopedDocuments, history, currentDraft));
   }
   const citations = mapCitations(parsed.citations, scopedDocuments);
   const grounded = citations.length === parsed.citations.length && citations.length > 0;

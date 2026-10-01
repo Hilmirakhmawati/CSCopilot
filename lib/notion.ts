@@ -50,10 +50,10 @@ function selectOf(property: Property | undefined) {
   return (property?.select as { name?: string } | undefined)?.name ?? (property?.status as { name?: string } | undefined)?.name ?? "";
 }
 
-// Chatbot-safe rows only: Visibility must allow the chatbot, and the two
-// customer-facing fields must be filled in — everything else (Internal Note,
-// backend detail, customer/order IDs in the page body) is intentionally
-// left out of what gets synced.
+// Access rule: Visibility = Chatbot Allowed may sync; Visibility = Internal
+// Only is always excluded. The two customer-facing fields must be filled in —
+// everything else (Internal Note, backend detail, customer/order IDs in the
+// page body) is intentionally left out of what gets synced.
 export async function readChatbotAllowedDatabaseRows(databaseId: string) {
   const notion = getNotion();
   const rows: { notion_page_id: string; title: string; url: string | null; content: string; last_edited_time: string | null }[] = [];
@@ -74,6 +74,12 @@ export async function readChatbotAllowedDatabaseRows(databaseId: string) {
       const action = richTextOf(properties["Customer Action"]);
       const reply = richTextOf(properties["Customer Reply"]);
       const requiredContext = richTextOf(properties["Required Context"]);
+      // Optional guidance fields. Multi-line values are joined with " | " so
+      // each stays on one "Label: value" line for sourceLine() to read.
+      const oneLine = (value: string) => value.split(/\n+/).map((part) => part.trim()).filter(Boolean).join(" | ");
+      const steps = oneLine(richTextOf(properties["Troubleshooting Steps"]));
+      const escalateWhen = oneLine(richTextOf(properties["Escalate When"]));
+      const lastVerified = richTextOf(properties["Last Verified"]) || ((properties["Last Verified"]?.date as { start?: string } | null | undefined)?.start ?? "");
       if (!summary || !action) continue;
       const titleProperty = Object.values(properties).find((p) => p.type === "title") as { title?: RichText[] } | undefined;
       const title = titleProperty?.title?.map((part) => part.plain_text ?? "").join("") || "Untitled";
@@ -82,6 +88,9 @@ export async function readChatbotAllowedDatabaseRows(databaseId: string) {
         `Customer Action: ${action}`,
         reply && `Customer Reply: ${reply}`,
         requiredContext && `Required Context: ${requiredContext}`,
+        steps && `Troubleshooting Steps: ${steps}`,
+        escalateWhen && `Escalate When: ${escalateWhen}`,
+        lastVerified && `Last Verified: ${lastVerified}`,
       ].filter(Boolean);
       rows.push({
         notion_page_id: raw.id,

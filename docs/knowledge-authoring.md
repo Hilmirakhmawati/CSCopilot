@@ -6,15 +6,24 @@ CSCopilot uses RAG: Notion content is synced to Supabase, then supplied to Claud
 
 Every customer-safe row needs:
 
-- `Visibility`: exactly `Chatbot Allowed`
+- `Visibility`: use exactly one of these values:
+  - `Chatbot Allowed`: artikel boleh dibaca chatbot dan dapat dipakai untuk jawaban grounded.
+  - `Internal Only`: artikel hanya untuk internal; tidak disinkronkan ke knowledge chatbot.
 - `Customer Safe Summary`: factual explanation for internal/CS analysis — never shown verbatim to the customer
+
+**Aturan akses:** hanya baris dengan `Visibility = Chatbot Allowed` yang masuk ke chatbot. `Visibility = Internal Only` selalu diabaikan oleh sync, meskipun field lainnya lengkap.
 - `Customer Action`: **internal instruction to the CS agent** (e.g. "Minta nomor pesanan terkait"). This is guidance for the human, not text to send. The app never uses it as a reply.
 
 Rows missing either field are skipped entirely.
 
 ## Customer-facing reply field
 
-- `Customer Reply`: the exact sentence(s) the app may offer as a Suggested Reply/draft. Write it as if speaking directly to the customer — polite, factual, no internal jargon.
+- `Customer Reply`: the exact sentence(s) the app may offer as a Suggested Reply/draft. Write it as if speaking directly to the customer — polite, factual, no internal jargon. Use future tense for checks (for example, `akan kami bantu cek`); never claim that an account or order was already checked, returned, fixed, or verified.
+- Optional guidance fields (all rich text, add as columns in Notion, then re-sync). Shown to CS only, never in the customer draft; the app never invents them:
+  - `Troubleshooting Steps`: one step per line, e.g. `1. Cek riwayat poin` / `2. Cek transaksi terkait`. Shown as "Langkah selanjutnya untuk CS".
+  - `Escalate When`: one condition per line, e.g. `Ada adjustment manual yang tidak dikenal`. Matched against CS reports like "sudah saya cek, ...".
+  - `Last Verified`: date (`2026-10-01`). Older than 90 days shows "Knowledge sudah lama, cek ulang".
+  - Missing steps or reply show the badge "Knowledge: Sebagian".
 - Rows without `Customer Reply` still sync (for internal guidance/search) but the app will **not** generate a draft for them — it returns a clarification state asking CS to complete the Notion row instead. `Customer Action` is never substituted in.
 
 ## Required Context (optional)
@@ -27,7 +36,7 @@ Rows missing either field are skipped entirely.
 ```
 Customer Safe Summary: Saldo poin dapat menampilkan 0 karena kendala sinkronisasi.
 Customer Action: Minta nomor pesanan terkait untuk verifikasi sebelum eskalasi ke tim poin.
-Customer Reply: Terima kasih sudah menghubungi kami. Mohon kirimkan nomor pesanan terkait agar tim kami dapat memeriksa saldo poin Anda.
+Customer Reply: Terima kasih sudah menghubungi kami. Mohon kirimkan nomor pesanan terkait agar kami dapat membantu mengecek saldo poin Anda.
 Required Context: nomor pesanan
 ```
 

@@ -1,13 +1,14 @@
 import assert from "assert/strict";
 import { fallback, generateNoAiAnswer, mapCitations, extractFirstJsonObject } from "./anthropic";
-import { POINT_ARTICLE_TITLE_MATCHES, classifyConversationIntent, continuationSignal, contextSatisfied, isClosingMessage, isCustomerContextRequest, isFeedbackMessage, isSarcasticOrDismissive, pointAnswer, pointArticleTitle, isPointTopic, selectPointArticle } from "./retrieval";
+import { POINT_ARTICLE_TITLE_MATCHES, classifyConversationIntent, continuationSignal, contextSatisfied, isClosingMessage, isCustomerContextRequest, isFeedbackMessage, isSarcasticOrDismissive, isAccountLabelOnly, isOrderLabelOnly, isGreetingOnly, withThanksGreeting, pointAnswer, pointArticleTitle, isPointTopic, selectPointArticle } from "./retrieval";
 import { activeContextForPrompt, trimHistoryToBudget, updateActiveContext } from "./context";
 import { readJson } from "./validation";
 import type { Citation, KnowledgeDocument } from "./assistant-types";
 import { filterDocumentsByProject, projectNames, resolveProjectScope } from "./project-scope";
-import { enforceMissingContextInvariant, hasCustomerFacingSourceLeak, sanitizeAnswer } from "./answer-safety";
+import { enforceMissingContextInvariant, hasCustomerFacingSourceLeak, hasFabricatedCheckClaim, sanitizeAnswer } from "./answer-safety";
+import { buildGuidance, splitItems } from "./case-guidance";
 
-export { enforceMissingContextInvariant, hasCustomerFacingSourceLeak, sanitizeAnswer } from "./answer-safety";
+export { enforceMissingContextInvariant, hasCustomerFacingSourceLeak, hasFabricatedCheckClaim, sanitizeAnswer } from "./answer-safety";
 
 export function validateCitations(citations: Citation[], documentIds: Set<string>) {
   return citations.filter((citation) => documentIds.has(citation.document_id));
@@ -18,6 +19,37 @@ if (process.argv[1]?.endsWith("assistant-check.ts")) {
   assert.equal(validateCitations([{ document_id: "unknown", title: "x", url: null, quote: "q" }], new Set(["known"])).length, 0);
   assert.equal(hasCustomerFacingSourceLeak("SOURCE 1\\nID: 0863960c-7058-4822-b749-8d931bec649c"), true);
   assert.equal(hasCustomerFacingSourceLeak("Mohon kirim nomor akun atau nomor pesanan terkait."), false);
+  assert.equal(hasFabricatedCheckClaim("Saldo sudah kami cek."), true);
+  assert.equal(hasFabricatedCheckClaim("Saldo akan kami bantu cek."), false);
+  assert.equal(hasFabricatedCheckClaim("Saya akan mengecek saldo akun."), true);
+  const fabricatedClaim = sanitizeAnswer({
+    intent: "Support issue", summary: "", missing_context: [], recommended_action: "", answer: "Saldo sudah kami cek.", draft_reply: "Saldo sudah kami cek.", citations: [], confidence: "high",
+  });
+  assert.equal(fabricatedClaim.confidence, "low");
+  assert.equal(fabricatedClaim.draft_reply, "");
+  assert.doesNotMatch(fabricatedClaim.answer, /sudah kami cek/i);
+
+  assert.deepEqual(splitItems("1. Cek riwayat | 2) Cek transaksi | - Catat hasil"), ["Cek riwayat", "Cek transaksi", "Catat hasil"]);
+  const guideDoc = (content: string): KnowledgeDocument => ({ id: "g1", title: "Saldo poin 0", url: null, content, category: null, synced_at: "" });
+  const guideBase = { intent: "Support issue", summary: "", missing_context: [], recommended_action: "", answer: "a", draft_reply: "d", citations: [{ document_id: "g1", title: "t", url: null, quote: "q" }], confidence: "high" as const };
+  const fullDoc = guideDoc("Customer Safe Summary: s\nCustomer Action: Minta nomor akun\nCustomer Reply: Mohon kirim nomor akun.\nRequired Context: nomor atau email akun terkait\nTroubleshooting Steps: 1. Cek riwayat poin | 2. Cek transaksi terkait\nEscalate When: Ada adjustment manual tidak dikenal\nLast Verified: 2020-01-01");
+  const afterAccount = buildGuidance(guideBase, [fullDoc], "akun", [{ role: "user", content: "Kenapa saldo poin 0?" }, { role: "assistant", content: "x" }, { role: "user", content: "13181993131" }, { role: "assistant", content: "y" }]);
+  assert.deepEqual(afterAccount.next_actions, ["Cek riwayat poin", "Cek transaksi terkait"]);
+  assert.equal(afterAccount.case_understanding?.stage, "info_received");
+  assert.deepEqual(afterAccount.case_understanding?.missing, []);
+  assert.equal(afterAccount.knowledge_status, "complete");
+  assert.equal(afterAccount.knowledge_stale, true);
+  assert.doesNotMatch(afterAccount.answer, /13181993131/);
+  const csResult = buildGuidance(guideBase, [fullDoc], "sudah saya cek, hasilnya ada saldo lama", [{ role: "user", content: "13181993131 akun" }]);
+  assert.equal(csResult.case_understanding?.stage, "cs_result");
+  const escalated = buildGuidance(guideBase, [fullDoc], "sudah saya cek, ada adjustment manual tidak dikenal", [{ role: "user", content: "13181993131 akun" }]);
+  assert.equal(escalated.case_understanding?.stage, "escalate");
+  const legacy = buildGuidance(guideBase, [guideDoc("Customer Safe Summary: s\nCustomer Action: Minta nomor akun")], "kenapa saldo 0", []);
+  assert.equal(legacy.knowledge_status, "partial");
+  assert.deepEqual(legacy.knowledge_missing, ["Troubleshooting Steps", "Customer Reply"]);
+  assert.equal(legacy.next_actions, undefined);
+  assert.equal(buildGuidance({ ...guideBase, citations: [] }, [], "pertanyaan baru", []).knowledge_status, "unavailable");
+  assert.equal(classifyConversationIntent("sudah saya cek, ada adjustment manual", [{ role: "user", content: "Kenapa saldo poin 0?" }], ""), "case_update");
 
   const docs: KnowledgeDocument[] = [
     { id: "doc-1", title: "A", url: null, content: "", category: null, synced_at: "" },
@@ -48,6 +80,8 @@ if (process.argv[1]?.endsWith("assistant-check.ts")) {
   assert.equal(classifyConversationIntent("draft balasannya belum sesuai", pointDraftHistory, pointDraft), "draft_feedback");
   assert.equal(classifyConversationIntent("kurang isi sapaan", pointDraftHistory, pointDraft), "draft_edit");
   assert.equal(classifyConversationIntent("ini akunnya: 083119349222", pointDraftHistory, pointDraft), "supplied_context");
+  assert.equal(classifyConversationIntent("akunnya Rara 083119349229", pointDraftHistory, pointDraft), "supplied_context");
+  assert.equal(classifyConversationIntent("nomor akun sudah dikirimkan, nama akunnya rara, nomornya 0831193487229 apa selanjutnya?", pointDraftHistory, pointDraft), "supplied_context");
   assert.equal(classifyConversationIntent("lalu apa saran yg bisa aku kasih ke client?", pointDraftHistory, pointDraft), "guidance_follow_up");
 
   // Legacy row: no Customer Reply field yet. Must never surface Customer
@@ -94,6 +128,9 @@ if (process.argv[1]?.endsWith("assistant-check.ts")) {
   assert.equal(contextSatisfied("nomor pesanan terkait", "1234567890"), true);
   assert.equal(contextSatisfied("nomor atau email akun terkait", "1234567890"), false);
   assert.equal(contextSatisfied("nomor atau email akun terkait", "akun 1234567890"), true);
+  assert.equal(contextSatisfied("nomor atau email akun terkait", "akunnya Rara 083119349229"), true);
+  assert.equal(contextSatisfied("nomor atau email akun terkait", "nomor akun sudah dikirimkan, nama akunnya rara, nomornya 0831193487229 apa selanjutnya?"), true);
+  assert.equal(contextSatisfied("nomor atau email akun terkait", "1234567890"), false);
   assert.equal(contextSatisfied("nomor atau email akun terkait", "customer@example.com"), true);
 
   // Broad point retrieval must not silently pick one of multiple active articles.
@@ -167,6 +204,112 @@ if (process.argv[1]?.endsWith("assistant-check.ts")) {
   assert.notEqual(verifiedPoint?.draft_reply, "");
   assert.equal(verifiedPoint?.draft_reply.includes("Minta nomor pesanan terkait untuk verifikasi"), false);
   assert.equal(point?.answer.includes("akan disesuaikan"), false);
+
+  // Regression: the visible answer must follow identifier follow-ups instead
+  // of repeating the initial point-balance summary.
+  const accountRequiredDocuments: KnowledgeDocument[] = [{
+    ...zeroBalanceDocuments[0],
+    content: zeroBalanceDocuments[0].content
+      .replace("Nomor order", "Nomor akun")
+      .replace("nomor pesanan terkait", "nomor akun terkait"),
+  }];
+  const pointConversation = [{ role: "user" as const, content: "Kenapa saldo poin 0?" }];
+  const bareIdentifier = pointAnswer("12142424 ini ya", accountRequiredDocuments, pointConversation);
+  assert.ok(bareIdentifier);
+  assert.match(bareIdentifier?.answer ?? "", /nomor akun/i);
+  assert.equal(bareIdentifier?.draft_reply, "");
+  const suppliedAccountAnswer = pointAnswer("Akunnya Rani 083119349229", accountRequiredDocuments, pointConversation);
+  assert.ok(suppliedAccountAnswer);
+  assert.match(suppliedAccountAnswer?.answer ?? "", /informasi akun.*diterima|memeriksa saldo poin/i);
+  assert.doesNotMatch(suppliedAccountAnswer?.answer ?? "", /Beberapa akun sempat menampilkan saldo poin 0/i);
+  assert.equal(suppliedAccountAnswer?.missing_context.length, 0);
+  assert.match(suppliedAccountAnswer?.draft_reply ?? "", /informasi akun sudah kami terima/i);
+
+  // Exact reported transcript: a later "no akun" confirms the preceding bare
+  // number, and "itu aja?" asks for clarification about the active point topic.
+  const accountConfirmed = pointAnswer(
+    "no akun",
+    accountRequiredDocuments,
+    [...pointConversation, { role: "user", content: "1213442525" }],
+  );
+  assert.equal(accountConfirmed?.intent, "Identifier received");
+  assert.match(accountConfirmed?.answer ?? "", /dicatat sebagai nomor akun|memeriksa saldo poin/i);
+  assert.doesNotMatch(accountConfirmed?.answer ?? "", /1213442525/);
+  assert.equal(accountConfirmed?.missing_context.length, 0);
+  assert.match(accountConfirmed?.draft_reply ?? "", /nomor akun sudah kami terima/i);
+
+  // Greetings are recognized structurally; names and team labels need no allowlist.
+  for (const greeting of [
+    "selamat sore", "Selamat pagi kak", "selamat malam", "selamat siang min", "selamat petang",
+    "halo", "haloo", "hallo kak", "hai kak budi", "hello", "hi there", "good morning",
+    "good evening team", "pagi", "pagi kak", "pagiii", "assalamualaikum", "assalamualaikum wr wb",
+    "Assalamu'alaikum kak", "permisi", "permisi kak", "halo selamat pagi", "halo kak apa kabar",
+    "selamat datang", "hey!", "👋", "hai tim support",
+  ]) assert.equal(isGreetingOnly(greeting), true, greeting);
+  for (const issue of [
+    "selamat sore, saldo poin saya 0", "halo saldo poin saya 0", "halo mau tanya",
+    "pagi, kenapa pesanan belum sampai", "halo 08123456789", "halo apa kabar? tolong cek akun",
+    "kenapa saldo poin 0", "terima kasih", "oke",
+  ]) assert.equal(isGreetingOnly(issue), false, issue);
+
+  // "no pesanan" confirms the preceding bare number as an order number.
+  assert.equal(isOrderLabelOnly("no pesanan"), true);
+  assert.equal(isOrderLabelOnly("nomor pesanannya"), true);
+  assert.equal(isOrderLabelOnly("pesanan saya belum sampai"), false);
+  assert.equal(continuationSignal("no pesanan"), true);
+  const orderConfirmed = pointAnswer(
+    "no pesanan",
+    zeroBalanceDocuments,
+    [...pointConversation, { role: "user", content: "1617399381803" }],
+  );
+  assert.equal(orderConfirmed?.intent, "Identifier received");
+  assert.match(orderConfirmed?.answer ?? "", /dicatat sebagai nomor pesanan/i);
+  assert.doesNotMatch(orderConfirmed?.draft_reply ?? "", /1617399381803/);
+  assert.equal(orderConfirmed?.missing_context.length, 0);
+  assert.equal(withThanksGreeting("Terima kasih sudah menghubungi kami. Mohon tunggu."), "Terima kasih sudah menghubungi kami. Mohon tunggu.");
+  assert.equal(withThanksGreeting("Mohon tunggu."), "Terima kasih sudah menghubungi kami. Mohon tunggu.");
+  assert.doesNotMatch(fallback("saldo poin 0", zeroBalanceDocuments).draft_reply, /menghubungi kami\.\s+Terima kasih/i);
+
+  // Exact reported transcript with the combined account/order Required Context.
+  const combinedDocuments: KnowledgeDocument[] = [{
+    ...zeroBalanceDocuments[0],
+    content: zeroBalanceDocuments[0].content
+      .replace("Nomor order", "Nomor akun atau nomor pesanan")
+      .replace("nomor pesanan terkait", "nomor akun atau nomor pesanan terkait"),
+  }];
+  const typoAccount = pointAnswer("ini adlaha nomer akunya 13181993131", combinedDocuments, pointConversation);
+  assert.equal(typoAccount?.missing_context.length, 0);
+  assert.doesNotMatch(typoAccount?.draft_reply ?? "", /13181993131|mohon kirimkan/i);
+  const combinedConfirmed = pointAnswer("akun", combinedDocuments, [
+    ...pointConversation,
+    { role: "user", content: "13181993131" },
+    { role: "assistant", content: "Nomor sudah diterima. Mohon pastikan, itu nomor akun atau nomor pesanan?" },
+  ]);
+  assert.equal(combinedConfirmed?.intent, "Identifier received");
+  assert.doesNotMatch(combinedConfirmed?.answer ?? "", /Saldo poin dapat menampilkan 0|13181993131/);
+  assert.equal(combinedConfirmed?.missing_context.length, 0);
+  assert.equal(combinedConfirmed?.citations.length, 1);
+  assert.equal(isAccountLabelOnly("nomer akunya"), true);
+
+  const topicFeedback = pointAnswer(
+    "itu aja?",
+    accountRequiredDocuments,
+    [
+      ...pointConversation,
+      { role: "assistant", content: "Mohon kirimkan nomor akun terkait." },
+      { role: "user", content: "1213442525" },
+      { role: "assistant", content: "Mohon pastikan itu nomor akun." },
+      { role: "user", content: "no akun" },
+      { role: "assistant", content: "Nomor tersebut dicatat sebagai nomor akun." },
+    ],
+  );
+  assert.equal(topicFeedback?.answer, "Boleh diperjelas, bagian mana dari topik poin sebelumnya yang masih kurang jelas, atau apakah ini pertanyaan baru?");
+  assert.equal(topicFeedback?.draft_reply, "");
+  assert.equal(topicFeedback?.citations.length, 1);
+  assert.equal(topicFeedback?.missing_context[0], "Klarifikasi diperlukan terkait topik yang sedang dibahas.");
+  assert.equal(isAccountLabelOnly("akun saya bermasalah"), false);
+  assert.equal(isAccountLabelOnly("no akun"), true);
+  assert.equal(pointAnswer("itu aja?", accountRequiredDocuments, [{ role: "user", content: "Kenapa login gagal?" }]), null);
 
   const calculationDocuments: KnowledgeDocument[] = [{
     id: "point-calculation",
