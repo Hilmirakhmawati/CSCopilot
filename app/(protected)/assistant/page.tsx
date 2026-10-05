@@ -107,6 +107,7 @@ export default function AssistantPage() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const requestVersion = useRef(0);
 
   useEffect(() => {
     apiFetch("/api/conversations").then((response) => readJson<Conversation[]>(response)).then((data) => {
@@ -117,18 +118,22 @@ export default function AssistantPage() {
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, loading]);
 
   async function selectConversation(id: string) {
-    setError(""); setMobileOpen(false); setActiveId(id); setConversationId(id); setAnswer(null); setDraft(""); setDraftId(null); setApproved(false); setApproving(false); setRejected(false); setRejecting(false); setSavedDraft(null); setHistory(null); setRestoredFromVersion(null);
+    const version = ++requestVersion.current;
+    setError(""); setMobileOpen(false); setActiveId(id); setConversationId(id); setMessages([]); setLoading(false); setAnswer(null); setDraft(""); setDraftId(null); setApproved(false); setApproving(false); setRejected(false); setRejecting(false); setSavedDraft(null); setHistory(null); setRestoredFromVersion(null);
     try {
       const data = await apiFetch(`/api/conversations/${id}/messages`).then((response) => readJson<Message[]>(response));
+      if (requestVersion.current !== version) return;
       setMessages(data.length ? data : [initialMessage]);
     } catch (e) {
+      if (requestVersion.current !== version) return;
       setMessages([initialMessage]);
       setError(e instanceof Error ? e.message : "Percakapan tidak dapat dimuat");
     }
   }
 
   function newChat() {
-    setActiveId(null); setConversationId(null); setMessages([]); setAnswer(null); setDraft(""); setDraftId(null); setApproved(false); setApproving(false); setRejected(false); setRejecting(false); setSavedDraft(null); setHistory(null); setRestoredFromVersion(null); setError(""); setInput(""); setMobileOpen(false);
+    requestVersion.current += 1;
+    setActiveId(null); setConversationId(null); setMessages([]); setLoading(false); setAnswer(null); setDraft(""); setDraftId(null); setApproved(false); setApproving(false); setRejected(false); setRejecting(false); setSavedDraft(null); setHistory(null); setRestoredFromVersion(null); setError(""); setInput(""); setMobileOpen(false);
   }
 
   async function deleteConversation(event: React.MouseEvent, id: string) {
@@ -144,29 +149,45 @@ export default function AssistantPage() {
   async function sendMessage() {
     const content = input.trim();
     if (!content || loading) return;
+    const version = ++requestVersion.current;
     setLoading(true); setError(""); setInput(""); setApproved(false); setRejected(false);
     // One key per logical send: a 401-token retry reuses it so the server
     // replays instead of duplicating the user turn.
     const idempotencyKey = typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `send-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    let optimisticId: string | null = null;
     try {
       let id = conversationId;
       let result: AssistantResponse;
       const userMessage: Message = { id: `user-${Date.now()}`, role: "user", content, created_at: new Date().toISOString() };
+      optimisticId = userMessage.id;
       setMessages((items) => [...items, userMessage]);
       if (!id) {
         const created = await apiFetch("/api/conversations", { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey }, body: JSON.stringify({ title: content.slice(0, 80), content, ...(draft ? { current_draft: draft } : {}) }) }).then((response) => readJson<NewConversationResponse>(response));
         if (!created.conversation?.id) throw new Error("Percakapan tidak dapat dibuat");
         id = created.conversation.id;
         result = created;
-        setConversationId(id); setActiveId(id); setConversations((items) => [created.conversation, ...items]);
+        setConversations((items) => [created.conversation, ...items.filter((item) => item.id !== id)]);
+        if (requestVersion.current !== version) return;
+        setConversationId(id); setActiveId(id);
       } else {
         result = await apiFetch(`/api/conversations/${id}/messages`, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey }, body: JSON.stringify({ content, ...(draft ? { current_draft: draft } : {}) }) }).then((response) => readJson<AssistantResponse>(response));
       }
       if (result.error) throw new Error(result.error);
+      if (requestVersion.current !== version) return;
       setAnswer(result); setDraft(result.draft_reply ?? ""); setDraftId(null); setSavedDraft(null); setHistory(null); setRestoredFromVersion(null); setMessages((items) => [...items, { id: result.message_id, role: "assistant", content: result.answer, citations: result.citations ?? [], created_at: result.created_at }]);
       setConversations((items) => items.map((item) => item.id === id ? { ...item, title: item.title || content.slice(0, 80), updated_at: new Date().toISOString() } : item));
-    } catch (e) { setError(e instanceof Error ? e.message : "Unexpected error"); }
-    finally { setLoading(false); }
+    } catch (e) {
+      // Server deletes the user turn on failure; mirror that and give the text back
+      // (only if the textarea is still empty, so newer typing is never overwritten).
+      if (requestVersion.current === version) {
+        if (optimisticId) setMessages((items) => items.filter((item) => item.id !== optimisticId));
+        setInput((current) => current || content);
+        setError(e instanceof Error ? e.message : "Unexpected error");
+      }
+    }
+    finally {
+      if (requestVersion.current === version) setLoading(false);
+    }
   }
 
   async function saveDraft() {

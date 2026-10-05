@@ -4,6 +4,7 @@ import { getSupabaseAdmin } from "./db";
 import { greetingAnswer, isGreetingOnly, retrieveKnowledge, continuationSignal } from "./retrieval";
 import { activeContextForPrompt, estimateTokens, supersedeTopic, trimHistoryToBudget, updateActiveContext, type ActiveContext } from "./context";
 import { sanitizeAnswer } from "./answer-safety";
+import { detectLanguage } from "./language";
 import { validateCitations } from "./assistant-check";
 
 type Database = ReturnType<typeof getSupabaseAdmin>;
@@ -202,6 +203,7 @@ async function processConversationMessageUnlocked(
 
   try {
     const greeting = isGreetingOnly(issue);
+    const language = detectLanguage(issue);
     const documents = greeting ? [] : await retrieveKnowledge(issue, boundedHistory);
     if (!greeting && documents.length === 0) {
       // Reused audit_events rather than a new table — same shape (actor,
@@ -209,9 +211,10 @@ async function processConversationMessageUnlocked(
       const zeroResult = await db.from("audit_events").insert({ actor_id: userId, entity_type: "knowledge_query", entity_id: null, action: "zero_result", metadata: { query: issue, conversation_id: conversationId } });
       if (zeroResult.error) console.error("Failed to log zero-result query", zeroResult.error);
     }
-    const answer = sanitizeAnswer(greeting
+    const generated = greeting
       ? greetingAnswer(issue, boundedHistory)
-      : await generateGroundedAnswer(issue, documents, boundedHistory, contextText, currentDraft));
+      : await generateGroundedAnswer(issue, documents, boundedHistory, contextText, currentDraft);
+    const answer = sanitizeAnswer(generated, language);
     answer.citations = validateCitations(
       answer.citations ?? [],
       new Set(documents.map((document) => document.id)),

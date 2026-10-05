@@ -5,6 +5,7 @@ import { withRetry } from "./retry";
 import { enforceMissingContextInvariant, sanitizeAnswer } from "./answer-safety";
 import { buildGuidance } from "./case-guidance";
 import { filterDocumentsByProject, historyForProject, resolveProjectScope } from "./project-scope";
+import { detectLanguage, type ResponseLanguage } from "./language";
 
 const DEFAULT_MODEL = "claude-sonnet-5";
 
@@ -24,7 +25,7 @@ function isUnavailableAnthropicError(error: unknown) {
   const value = error as { status?: unknown; message?: unknown };
   const status = value.status;
   const message = typeof value.message === "string" ? value.message : "";
-  return status === 401 || status === 403 || status === 404 || /no active credentials|model_not_found|invalid api key|authentication/i.test(message);
+  return status === 401 || status === 403 || status === 404 || status === 529 || /no active credentials|model_not_found|invalid api key|authentication/i.test(message);
 }
 
 function words(value: string) {
@@ -133,9 +134,10 @@ function isFollowUpQuestion(issue: string) {
   return /\b(berapa lama|kapan|estimasi waktu|timeline|durasi|siapa|menangani|handle|status)\b/i.test(issue);
 }
 
-export function fallback(issue: string, documents: KnowledgeDocument[], history: Array<{ role: "user" | "assistant"; content: string }> = [], currentDraft = ""): GroundedAnswer {
+export function fallback(issue: string, documents: KnowledgeDocument[], history: Array<{ role: "user" | "assistant"; content: string }> = [], currentDraft = "", lang: ResponseLanguage = detectLanguage(issue)): GroundedAnswer {
   const scope = resolveProjectScope(issue, history);
   const projects = scope.projects;
+  const english = lang === "en";
   const scopedDocuments = filterDocumentsByProject(documents, scope.project);
   const intent = classifyConversationIntent(issue, history, currentDraft);
   if (intent === "draft_regeneration" || intent === "draft_feedback" || intent === "draft_edit") {
@@ -155,13 +157,13 @@ export function fallback(issue: string, documents: KnowledgeDocument[], history:
     }
   }
   if (scope.ambiguous && !isClosingMessage(issue) && !isFeedbackMessage(issue)) {
-    const projectList = scope.projects.map((project) => `Project ${project}`).join(", ").replace(/, ([^,]*)$/, " atau $1");
+    const projectList = scope.projects.map((project) => `Project ${project}`).join(", ").replace(/, ([^,]*)$/, english ? " or $1" : " atau $1");
     return {
       intent: "Needs clarification",
       summary: "The latest message is ambiguous between multiple recent projects.",
-      missing_context: [`Project belum jelas: ${scope.projects.join(", ")}.`],
+      missing_context: [english ? `Project is unclear: ${scope.projects.join(", ")}.` : `Project belum jelas: ${scope.projects.join(", ")}.`],
       recommended_action: "Ask which project the customer means before preparing a reply.",
-      answer: `Maksudnya ${projectList}?`,
+      answer: english ? `Do you mean ${projectList}?` : `Maksudnya ${projectList}?`,
       draft_reply: "",
       citations: [],
       confidence: "low",
@@ -173,19 +175,31 @@ export function fallback(issue: string, documents: KnowledgeDocument[], history:
   // shape carries no keyword tying it to one project either.
   const ambiguousFollowUp = continuationSignal(issue, history) || (isNewQuestion(issue) && !hasExplicitIssueTopic(issue));
   if (projects.length >= 2 && ambiguousFollowUp && !scope.explicit && !isFeedbackMessage(issue)) {
-    const projectList = projects.map((project) => `Project ${project}`).join(", ").replace(/, ([^,]*)$/, " atau $1");
+    const projectList = projects.map((project) => `Project ${project}`).join(", ").replace(/, ([^,]*)$/, english ? " or $1" : " atau $1");
     return {
       intent: "Needs clarification",
       summary: "The latest message is ambiguous between multiple recent projects.",
-      missing_context: [`Project belum jelas: ${projects.join(", ")}.`],
+      missing_context: [english ? `Project is unclear: ${projects.join(", ")}.` : `Project belum jelas: ${projects.join(", ")}.`],
       recommended_action: "Ask which project the customer means before preparing a reply.",
-      answer: `Maksudnya ${projectList}?`,
+      answer: english ? `Do you mean ${projectList}?` : `Maksudnya ${projectList}?`,
       draft_reply: "",
       citations: [],
       confidence: "low",
     };
   }
 
+  if (isClosingMessage(issue) && english) {
+    return {
+      intent: "Conversation closed",
+      summary: "The customer conversation was acknowledged.",
+      missing_context: [],
+      recommended_action: "No further action is required.",
+      answer: "You're welcome! 😊 Did that help and match what you needed? If any part is still unclear, just let me know.",
+      draft_reply: "You're welcome! 😊 Did that help and match what you needed? If any part is still unclear, just let us know.",
+      citations: [],
+      confidence: "high",
+    };
+  }
   if (isClosingMessage(issue)) {
     return {
       intent: "Conversation closed",
@@ -204,6 +218,18 @@ export function fallback(issue: string, documents: KnowledgeDocument[], history:
   const contextText = continuationSignal(issue, history)
     ? [...history.filter((message) => message.role === "user").slice(-3).map((message) => message.content), issue].join(" ")
     : issue;
+  if (isSarcasticOrDismissive(issue) && english) {
+    return {
+      intent: "Needs clarification",
+      summary: "The latest message may be a sarcastic or dismissive reaction and does not add reliable issue details.",
+      missing_context: ["Please explain which part of the issue is still unclear or what should be followed up."],
+      recommended_action: "Clarify the customer's intended question before preparing a reply.",
+      answer: "Which part is still unclear or needs follow-up?",
+      draft_reply: "",
+      citations: [],
+      confidence: "low",
+    };
+  }
   if (isSarcasticOrDismissive(issue)) {
     return {
       intent: "Needs clarification",
@@ -237,7 +263,7 @@ export function fallback(issue: string, documents: KnowledgeDocument[], history:
     const followUpQuery = continuationSignal(issue, history)
       ? [...history.filter((message) => message.role === "user").slice(-3).map((message) => message.content), issue].join(" ")
       : issue;
-    const followUpMissing = followUpContext ? missingContextMessage(followUpContext, followUpQuery) : null;
+    const followUpMissing = followUpContext ? missingContextMessage(followUpContext, followUpQuery, lang) : null;
     if (supportedFollowUp && bestReply && !followUpMissing) {
       return {
         intent: "Support issue",
@@ -253,11 +279,15 @@ export function fallback(issue: string, documents: KnowledgeDocument[], history:
     return {
       intent: "Needs clarification",
       summary: "The customer asks for a timeline that is not provided by the available knowledge.",
-      missing_context: [followUpMissing ?? "Estimasi waktu penyelesaian belum tersedia di knowledge perusahaan."],
+      missing_context: [followUpMissing ?? (english ? "The resolution timeline is not available in company knowledge." : "Estimasi waktu penyelesaian belum tersedia di knowledge perusahaan.")],
       recommended_action: "Confirm the timeline or current status with the responsible team before replying.",
-      answer: asksTimeline
-        ? "Estimasi waktu penyelesaian belum tersedia di knowledge perusahaan dan perlu dikonfirmasi ke tim terkait."
-        : "Status kasus belum dapat dikonfirmasi dari knowledge perusahaan dan perlu diverifikasi ke tim terkait.",
+      answer: english
+        ? asksTimeline
+          ? "The resolution timeline is not available in company knowledge and needs to be confirmed with the responsible team."
+          : "The case status cannot be confirmed from company knowledge and needs to be verified with the responsible team."
+        : asksTimeline
+          ? "Estimasi waktu penyelesaian belum tersedia di knowledge perusahaan dan perlu dikonfirmasi ke tim terkait."
+          : "Status kasus belum dapat dikonfirmasi dari knowledge perusahaan dan perlu diverifikasi ke tim terkait.",
       draft_reply: "",
       citations: [],
       confidence: "low",
@@ -273,11 +303,13 @@ export function fallback(issue: string, documents: KnowledgeDocument[], history:
     const recentTopic = latestPointTopic(history);
     const topicShifted = recentTopic && !isPointTopic(issue) && !hasExplicitIssueTopic(issue);
     if (topicShifted) {
-      const question = "Boleh diperjelas, bagian mana dari topik poin sebelumnya yang masih kurang jelas, atau apakah ini pertanyaan baru?";
+      const question = english
+        ? "Could you clarify which part of the previous points topic is still unclear, or is this a new question?"
+        : "Boleh diperjelas, bagian mana dari topik poin sebelumnya yang masih kurang jelas, atau apakah ini pertanyaan baru?";
       return {
         intent: "Needs clarification",
         summary: "The latest message is ambiguous relative to the current topic.",
-        missing_context: ["Klarifikasi diperlukan terkait topik yang sedang dibahas."],
+        missing_context: [english ? "Clarification is needed about the topic being discussed." : "Klarifikasi diperlukan terkait topik yang sedang dibahas."],
         recommended_action: "Ask the customer to clarify relative to the current topic before replying.",
         answer: question,
         draft_reply: "",
@@ -288,10 +320,27 @@ export function fallback(issue: string, documents: KnowledgeDocument[], history:
 
     const supplied = suppliedClarificationDetails(issue, history);
     const missing = [
-      !supplied.account && "akun yang terdampak",
-      !supplied.error && "pesan error yang muncul",
-      !supplied.steps && "langkah yang sudah dicoba",
+      !supplied.account && (english ? "the affected account" : "akun yang terdampak"),
+      !supplied.error && (english ? "the error message" : "pesan error yang muncul"),
+      !supplied.steps && (english ? "the steps already tried" : "langkah yang sudah dicoba"),
     ].filter((item): item is string => Boolean(item));
+    if (english) {
+      const question = missing.length
+        ? `There is not enough relevant company knowledge to answer this issue. Please provide ${missing.join(", ")}.`
+        : isNewQuestion(issue)
+          ? "The available knowledge does not explain this question. The case needs to be verified manually by Customer Support."
+          : "There is not enough relevant company knowledge to answer this issue. The details provided have been recorded; the case needs manual verification by Customer Support.";
+      return {
+        intent: "Needs clarification",
+        summary: "No matching company knowledge was found.",
+        missing_context: missing.length ? [`Relevant company documentation is unavailable. Confirm ${missing.join(", ")}.`] : [],
+        recommended_action: "Collect the missing details and verify the case manually before replying.",
+        answer: question,
+        draft_reply: "",
+        citations: [],
+        confidence: "low",
+      };
+    }
     const question = missing.length
       ? `Belum ada knowledge perusahaan yang cukup relevan untuk menjawab issue ini. Bisa tolong kirimkan ${missing.join(", ")}?`
       : isNewQuestion(issue)
@@ -327,7 +376,7 @@ export function fallback(issue: string, documents: KnowledgeDocument[], history:
   const contextQuery = continuationSignal(issue, history)
     ? [...history.filter((message) => message.role === "user").slice(-3).map((message) => message.content), issue].join(" ")
     : issue;
-  const missingContext = missingContextMessage(context, contextQuery);
+  const missingContext = missingContextMessage(context, contextQuery, detectLanguage(issue));
   const missing = [
     ...(missingContext ? [missingContext] : []),
     ...(!replyLine ? ["Artikel ini belum memiliki field Customer Reply. Tinjau dan lengkapi di Notion sebelum draft dapat dibuat otomatis."] : []),
@@ -358,7 +407,7 @@ Handle greetings naturally and briefly. For greeting-only messages, reply in the
 The messages before the final one are prior conversation history, for context only. Always answer the CURRENT CLIENT MESSAGE in the final user turn — never answer an earlier question instead, even if it is easier to answer or still unresolved.
 When the conversation mentions more than one project, product, or system, first identify which one the CURRENT CLIENT MESSAGE concerns — from an explicit name in that message, or otherwise the nearest prior message that clearly set the current topic. Use and cite only sources and context belonging to that project; never combine facts, causes, or solutions from a different project into the same answer, even if both were discussed earlier in this conversation.
 If you cannot tell which project or prior issue the CURRENT CLIENT MESSAGE refers to (for example, two projects were just discussed and the message only says "this"/"ini"/"itu"), do not guess. Say so and ask a short clarifying question in draft_reply, and note the ambiguity in missing_context, instead of answering for one project.
-Respond in Indonesian for Indonesian input, English for English input, and mirror mixed language naturally.
+Respond in Indonesian for Indonesian input, English for English input, and mirror mixed language naturally. Decide the language from the CURRENT CLIENT MESSAGE only, and use that one language for every text field: answer, draft_reply, missing_context, recommended_action, and summary. When the language is English but the sources are Indonesian, translate the supported content faithfully into English without adding, removing, or changing any fact, step, or policy. Quotes in citations stay verbatim in the source language. The Indonesian phrases quoted in the rules below are examples, not required wording.
 Notion sources are the only authority for company-specific claims. Use only supplied sources.
 Treat source metadata as internal evidence only. Never copy SOURCE labels, IDs, UUIDs, titles, URLs, scores, or metadata into answer or draft_reply. Put source IDs only in structured citations.
 Only put something in missing_context if the customer's message truly lacks it and the agent cannot proceed without it. Never list information already provided (order number, account, error message, etc.) or "nice to have" details. Routine manual verification steps that the agent always performs as part of the SOP (checking a database, confirming a balance) belong in recommended_action, not missing_context — missing_context is only for what the customer still needs to supply.
@@ -369,6 +418,8 @@ Clarification Flow: before answering, check whether the issue plus the supplied 
 Produce an editable customer-facing draft, never send it, and never claim it was sent. Draft regeneration or feedback must revise the supplied CURRENT DRAFT using only the active source's Customer Reply. A greeting edit must preserve the draft body and add one greeting only. A supplied customer identifier satisfies the matching Required Context; do not repeat the request or expose the identifier in the draft. A customer-guidance follow-up should answer the active topic using Customer Safe Summary and Customer Action as internal guidance, while using only Customer Reply for customer-facing wording. Never copy Customer Action into draft_reply.
 Return JSON matching the requested schema.`;
 
+const UNTRANSLATED_NOTE_EN = "Note: this answer could not be translated to English, so it is shown in the original Indonesian knowledge text.";
+
 // Guidance (steps, case understanding, knowledge status) is derived from the
 // cited article only, for every path, so the model never writes it.
 export async function generateGroundedAnswer(issue: string, documents: KnowledgeDocument[], history: Array<{ role: "user" | "assistant"; content: string }> = [], contextSummary = "", currentDraft = ""): Promise<GroundedAnswer> {
@@ -377,21 +428,29 @@ export async function generateGroundedAnswer(issue: string, documents: Knowledge
 
 async function generateBaseAnswer(issue: string, documents: KnowledgeDocument[], history: Array<{ role: "user" | "assistant"; content: string }> = [], contextSummary = "", currentDraft = ""): Promise<GroundedAnswer> {
   if (isGreetingOnly(issue)) return greetingAnswer(issue, history);
-  if (isClosingMessage(issue)) return fallback(issue, documents, history, currentDraft);
+  const lang = detectLanguage(issue);
+  if (isClosingMessage(issue)) return fallback(issue, documents, history, currentDraft, lang);
   const scope = resolveProjectScope(issue, history);
-  if (scope.ambiguous) return fallback(issue, documents, history, currentDraft);
+  if (scope.ambiguous) return fallback(issue, documents, history, currentDraft, lang);
   const scopedDocuments = scope.project ? filterDocumentsByProject(documents, scope.project) : documents;
   const modelHistory = scope.project ? historyForProject(history, scope.project) : history;
   const deterministicPointAnswer = pointAnswer(issue, scopedDocuments, modelHistory, currentDraft);
-  if (deterministicPointAnswer) return sanitizeAnswer(deterministicPointAnswer);
-  if (!scopedDocuments.length || !configuredApiKey() || process.env.CSCOPILOT_NO_AI === "1") return sanitizeAnswer(fallback(issue, scopedDocuments, modelHistory, currentDraft));
+  const canTranslatePointAnswer = lang === "en" && Boolean(deterministicPointAnswer?.citations.length) && Boolean(configuredApiKey()) && process.env.CSCOPILOT_NO_AI !== "1";
+  // The deterministic point answer comes straight from the (Indonesian) article. When an English asker gets it untranslated,
+  // tell CS in `answer` only; draft_reply is customer-facing and must stay clean.
+  const untranslatedPointAnswer = () => {
+    const safe = sanitizeAnswer(deterministicPointAnswer!, lang);
+    return lang === "en" && detectLanguage(safe.answer) === "id" ? { ...safe, answer: `${UNTRANSLATED_NOTE_EN}\n\n${safe.answer}` } : safe;
+  };
+  const safePointFallback = () => deterministicPointAnswer ? untranslatedPointAnswer() : undefined;
+  if (deterministicPointAnswer && !canTranslatePointAnswer) return untranslatedPointAnswer();
+  if (!scopedDocuments.length || !configuredApiKey() || process.env.CSCOPILOT_NO_AI === "1") return sanitizeAnswer(fallback(issue, scopedDocuments, modelHistory, currentDraft, lang), lang);
   const context = scopedDocuments.map((doc, index) => `REFERENCE ${index + 1}\nCONTENT:\n${doc.content}`).join("\n\n");
   let response;
   try {
     response = await withRetry(() => client().messages.create({
       model: process.env.ANTHROPIC_MODEL?.trim() || process.env.CLAUDE_MODEL?.trim() || DEFAULT_MODEL,
       max_tokens: 1800,
-      thinking: { type: "adaptive" } as never,
       system,
 messages: [
   ...modelHistory,
@@ -425,7 +484,7 @@ Do not invent facts not supported by the knowledge context or conversation.`
 ],
     } as never));
   } catch (error) {
-    if (isUnavailableAnthropicError(error)) return sanitizeAnswer(fallback(issue, scopedDocuments, history, currentDraft));
+    if (isUnavailableAnthropicError(error)) return safePointFallback() ?? sanitizeAnswer(fallback(issue, scopedDocuments, history, currentDraft, lang), lang);
     throw error;
   }
   if ((response as { stop_reason?: string }).stop_reason === "refusal") throw new Error("Claude refused this request");
@@ -440,15 +499,15 @@ Do not invent facts not supported by the knowledge context or conversation.`
     // A malformed model response must not break the support workflow. The
     // deterministic answer still uses only the retrieved customer-safe fields.
     console.warn("Claude returned non-JSON output; using grounded fallback");
-    return sanitizeAnswer(fallback(issue, scopedDocuments, history, currentDraft));
+    return safePointFallback() ?? sanitizeAnswer(fallback(issue, scopedDocuments, history, currentDraft, lang), lang);
   }
   if (!isModelAnswer(parsed)) {
     console.warn("Claude returned an unexpected schema; using grounded fallback");
-    return sanitizeAnswer(fallback(issue, scopedDocuments, history, currentDraft));
+    return safePointFallback() ?? sanitizeAnswer(fallback(issue, scopedDocuments, history, currentDraft, lang), lang);
   }
   const citations = mapCitations(parsed.citations, scopedDocuments);
   const grounded = citations.length === parsed.citations.length && citations.length > 0;
-  return enforceMissingContextInvariant({
+  return (grounded ? undefined : safePointFallback()) ?? enforceMissingContextInvariant({
     ...parsed,
     citations,
     ...(grounded ? {} : {

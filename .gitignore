@@ -30,6 +30,9 @@ inwan/
 # Screenshots
 ss-image/
 
+tests/.auth/
+test-results/
+
 # Claude Code local state
 .claude/
 

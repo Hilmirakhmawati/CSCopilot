@@ -1,4 +1,4 @@
-const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
+const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504, 529]);
 
 function statusOf(error: unknown) {
   if (!error || typeof error !== "object") return undefined;

@@ -1,12 +1,13 @@
 import assert from "assert/strict";
-import { fallback, generateNoAiAnswer, mapCitations, extractFirstJsonObject } from "./anthropic";
-import { POINT_ARTICLE_TITLE_MATCHES, classifyConversationIntent, continuationSignal, contextSatisfied, isClosingMessage, isCustomerContextRequest, isFeedbackMessage, isSarcasticOrDismissive, isAccountLabelOnly, isOrderLabelOnly, isGreetingOnly, withThanksGreeting, pointAnswer, pointArticleTitle, isPointTopic, selectPointArticle } from "./retrieval";
+import { fallback, generateGroundedAnswer, generateNoAiAnswer, mapCitations, extractFirstJsonObject } from "./anthropic";
+import { POINT_ARTICLE_TITLE_MATCHES, classifyConversationIntent, continuationSignal, contextSatisfied, isClosingMessage, isCustomerContextRequest, isFeedbackMessage, isSarcasticOrDismissive, isAccountLabelOnly, isOrderLabelOnly, isGreetingOnly, greetingAnswer, withThanksGreeting, pointAnswer, pointArticleTitle, isPointTopic, selectPointArticle } from "./retrieval";
 import { activeContextForPrompt, trimHistoryToBudget, updateActiveContext } from "./context";
 import { readJson } from "./validation";
 import type { Citation, KnowledgeDocument } from "./assistant-types";
 import { filterDocumentsByProject, projectNames, resolveProjectScope } from "./project-scope";
 import { enforceMissingContextInvariant, hasCustomerFacingSourceLeak, hasFabricatedCheckClaim, sanitizeAnswer } from "./answer-safety";
 import { buildGuidance, splitItems } from "./case-guidance";
+import { detectLanguage } from "./language";
 
 export { enforceMissingContextInvariant, hasCustomerFacingSourceLeak, hasFabricatedCheckClaim, sanitizeAnswer } from "./answer-safety";
 
@@ -61,7 +62,10 @@ if (process.argv[1]?.endsWith("assistant-check.ts")) {
   assert.equal(extractFirstJsonObject("no JSON here"), undefined);
 
   assert.equal(pointArticleTitle("Saldo poin customer tampil 0 padahal sebelumnya ada"), POINT_ARTICLE_TITLE_MATCHES[0]);
+  assert.equal(pointArticleTitle("Why is my points balance 0?"), POINT_ARTICLE_TITLE_MATCHES[0]);
+  assert.equal(pointArticleTitle("My points balance is zero"), POINT_ARTICLE_TITLE_MATCHES[0]);
   assert.equal(pointArticleTitle("Riwayat poin tidak sesuai dengan pesanan"), POINT_ARTICLE_TITLE_MATCHES[1]);
+  assert.equal(isPointTopic("Why is my points balance 0?"), true);
   assert.equal(pointArticleTitle("Kenapa riwayat poin beda?"), POINT_ARTICLE_TITLE_MATCHES[1]);
   assert.equal(pointArticleTitle("Kenapa riwayat poin tidak sesuai?"), POINT_ARTICLE_TITLE_MATCHES[1]);
   assert.equal(pointArticleTitle("Perhitungan penggunaan poin saya salah"), POINT_ARTICLE_TITLE_MATCHES[2]);
@@ -194,6 +198,7 @@ if (process.argv[1]?.endsWith("assistant-check.ts")) {
     category: "points",
     synced_at: "",
   }];
+  assert.equal(pointAnswer("Why is my points balance 0?", zeroBalanceDocuments)?.citations[0]?.document_id, "point-0");
   assert.equal(continuationSignal("123344555"), true);
   assert.equal(continuationSignal("customer@example.com"), true);
   const verifiedBareIdentifier = pointAnswer("123344555", zeroBalanceDocuments, [{ role: "user", content: "Kenapa saldo poin 0?" }]);
@@ -640,7 +645,7 @@ if (process.argv[1]?.endsWith("assistant-check.ts")) {
     assert.equal(isClosingMessage(message), true, message);
     const acknowledgement = generateNoAiAnswer(message, [], inwanTopicHistory);
     assert.equal(acknowledgement.intent, "Conversation closed", message);
-    assert.match(acknowledgement.answer, /membantu|sesuai|kurang jelas/i, message);
+    assert.match(acknowledgement.answer, /membantu|sesuai|kurang jelas|help|unclear/i, message);
     assert.equal(acknowledgement.draft_reply.length > 0, true, message);
   }
   for (const message of ["ya terus gimana dong, masa cuma itu?", "masih kurang jelas", "belum menjawab pertanyaanku", "terus gimana?", "masa cuma itu?", "jawabannya masih kurang"]) {
@@ -762,6 +767,56 @@ if (process.argv[1]?.endsWith("assistant-check.ts")) {
   const sarcasmFallback = fallback("yaelah, aku ga ngerti", []);
   assert.equal(sarcasmFallback.draft_reply, "");
   assert.equal(sarcasmFallback.missing_context.length > 0, true);
+
+  // English question + Indonesian-only article + no translation available: CS must be told the answer is untranslated,
+  // but the customer-facing draft stays clean and Indonesian questions get no note.
+  void (async () => {
+    const previousNoAi = process.env.CSCOPILOT_NO_AI;
+    process.env.CSCOPILOT_NO_AI = "1";
+    try {
+      const english = await generateGroundedAnswer("Why is my points balance 0?", zeroBalanceDocuments);
+      assert.match(english.answer, /could not be translated/i);
+      assert.doesNotMatch(english.draft_reply, /could not be translated/i);
+      const indonesian = await generateGroundedAnswer("Kenapa saldo poin 0?", zeroBalanceDocuments);
+      assert.doesNotMatch(indonesian.answer, /could not be translated/i);
+      console.log("untranslated point answer check passed");
+    } finally {
+      if (previousNoAi === undefined) delete process.env.CSCOPILOT_NO_AI;
+      else process.env.CSCOPILOT_NO_AI = previousNoAi;
+    }
+  })();
+
+  // Response language follows the latest message; ambiguous input stays Indonesian.
+  assert.equal(detectLanguage("Why is my points balance 0?"), "en");
+  assert.equal(detectLanguage("Please check this account"), "en");
+  assert.equal(detectLanguage("Kenapa saldo poin 0?"), "id");
+  assert.equal(detectLanguage("Why saldo poin saya 0?"), "id");
+  assert.equal(detectLanguage("123344555"), "id");
+  assert.equal(detectLanguage("order"), "id");
+  assert.equal(detectLanguage(""), "id");
+  // Marker tally: the side with more markers wins, so one stray token no longer flips the language.
+  assert.equal(detectLanguage("Why is this error ada di app"), "en");
+  assert.equal(detectLanguage("Topup error terus"), "id");
+  assert.equal(detectLanguage("Pesanan 123 gagal"), "id");
+  // No markers on either side: franc-min decides for 3+ words, shorter input stays Indonesian.
+  assert.equal(detectLanguage("Refund not received after 3 days"), "en");
+  assert.equal(detectLanguage("Payment gateway timeout on checkout"), "en");
+  assert.equal(detectLanguage("Points balance 0 after purchase"), "en");
+  assert.equal(detectLanguage("Order 123 failed"), "id");
+  const indonesianWords = /\b(?:mohon|tolong|kami|anda|belum|sudah|terima kasih|knowledge perusahaan|maksudnya|boleh|diperjelas|kendala)\b/i;
+  const englishUnknown = fallback("Why can't I log in to the app?", [], []);
+  assert.doesNotMatch(`${englishUnknown.answer} ${englishUnknown.draft_reply} ${englishUnknown.missing_context.join(" ")}`, indonesianWords);
+  assert.match(englishUnknown.answer, /company knowledge/i);
+  const englishGreeting = greetingAnswer("Hello", []);
+  assert.doesNotMatch(`${englishGreeting.answer} ${englishGreeting.draft_reply}`, indonesianWords);
+  assert.match(greetingAnswer("Halo", []).answer, /Halo|Ada yang mau/i);
+  const englishLeak = sanitizeAnswer({ ...englishUnknown, answer: "SOURCE 1", draft_reply: "SOURCE 1" }, "en");
+  assert.doesNotMatch(englishLeak.answer, indonesianWords);
+  assert.equal(hasFabricatedCheckClaim("I've already checked your account."), true);
+  assert.equal(hasFabricatedCheckClaim("Our team has verified the order."), true);
+  assert.equal(hasFabricatedCheckClaim("The system has processed refunds within 3 days for all orders."), false);
+  assert.equal(hasFabricatedCheckClaim("The team has reviewed the policy and updated this guide."), false);
+  assert.equal(hasFabricatedCheckClaim("Please send the order number."), false);
 
   console.log("assistant-check passed");
 }

@@ -1,5 +1,6 @@
 import type { GroundedAnswer, KnowledgeDocument } from "./assistant-types";
 import { continuationSignal, isAccountLabelOnly, isOrderLabelOnly, requiredContext, sourceLine, suppliedIdentifier } from "./retrieval";
+import { detectLanguage, type ResponseLanguage } from "./language";
 
 type Turn = { role: "user" | "assistant"; content: string };
 type Kind = "account" | "order" | "email" | "unknown";
@@ -12,11 +13,22 @@ const NO_DOC_STEPS = [
   "Cek apakah ada artikel serupa di knowledge base.",
   "Eskalasi ke atasan atau PIC terkait bila belum ada panduan.",
 ];
+const NO_DOC_STEPS_EN = [
+  "Collect the case details from the customer (account/order number, error message, and time of occurrence).",
+  "Check whether a similar article exists in the knowledge base.",
+  "Escalate to the manager or responsible owner when no guidance is available.",
+];
 const kindLabel: Record<Kind, string> = {
   account: "nomor akun (belum diverifikasi)",
   order: "nomor pesanan (belum diverifikasi)",
   email: "email akun (belum diverifikasi)",
   unknown: "nomor tanpa label (akun atau pesanan belum jelas)",
+};
+const kindLabelEn: Record<Kind, string> = {
+  account: "account number (not verified)",
+  order: "order number (not verified)",
+  email: "account email (not verified)",
+  unknown: "unlabeled number (account or order is unclear)",
 };
 
 // Notion sync joins multi-line values with " | " so sourceLine() can read them.
@@ -48,10 +60,12 @@ function suppliedKinds(query: string, history: Turn[]) {
 }
 
 export function buildGuidance(answer: GroundedAnswer, documents: KnowledgeDocument[], query: string, history: Turn[] = [], now = Date.now()): GroundedAnswer {
+  const lang: ResponseLanguage = detectLanguage(query);
+  const english = lang === "en";
   const document = documents.find((item) => item.id === answer.citations?.[0]?.document_id);
   if (!document) {
     if (documents.length || answer.intent === "Greeting" || answer.intent === "Conversation closed") return answer;
-    return { ...answer, knowledge_status: "unavailable", next_actions: NO_DOC_STEPS };
+    return { ...answer, knowledge_status: "unavailable", next_actions: english ? NO_DOC_STEPS_EN : NO_DOC_STEPS };
   }
 
   const steps = splitItems(sourceLine(document.content, "Troubleshooting Steps"));
@@ -71,7 +85,7 @@ export function buildGuidance(answer: GroundedAnswer, documents: KnowledgeDocume
 
   return {
     ...answer,
-    ...(stage ? { case_understanding: { received: [...kinds].map((kind) => kindLabel[kind]), missing, stage } } : {}),
+    ...(stage ? { case_understanding: { received: [...kinds].map((kind) => (english ? kindLabelEn : kindLabel)[kind]), missing, stage } } : {}),
     ...(steps.length ? { next_actions: steps } : {}),
     ...(escalate.length ? { escalate_when: escalate } : {}),
     knowledge_status: knowledge_missing.length ? "partial" : "complete",

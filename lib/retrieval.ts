@@ -1,6 +1,7 @@
 import type { GroundedAnswer, KnowledgeDocument } from "./assistant-types";
 import { getSupabaseAdmin } from "./db";
 import { filterDocumentsByProject, historyForProject, isStandaloneProjectAlias, resolveProjectScope } from "./project-scope";
+import { contextLabel, detectLanguage } from "./language";
 
 // Short questions or ones that reference something already said ("itu", "nya")
 // carry no keywords of their own — only those get to borrow prior context.
@@ -218,10 +219,13 @@ export function isGreetingOnly(query: string) {
 
 export function greetingAnswer(query: string, history: Array<{ role: "user" | "assistant"; content: string }> = []): GroundedAnswer {
   const normalized = query.toLowerCase();
-  const english = /\b(hi|hello|hey|good\s+(morning|afternoon|evening)|what(?:'|’)s\s+up)\b/.test(normalized) && !/\b(halo|hai|pagi|siang|sore|malam|selamat|apa\s+kabar)\b/.test(normalized);
+  const lang = detectLanguage(query);
+  const english = lang === "en";
   const current = english ? "Hi! 👋" : /\b(pagi|selamat pagi)\b/.test(normalized) ? "Selamat pagi! 👋" : /\b(siang|selamat siang)\b/.test(normalized) ? "Selamat siang! 👋" : /\b(sore|petang|selamat sore|selamat petang)\b/.test(normalized) ? "Selamat sore! 👋" : /\b(malam|selamat malam)\b/.test(normalized) ? "Selamat malam! 👋" : "Halo! 👋";
   const hasTopic = history.some((message) => message.role === "user");
-  const answer = hasTopic ? `${current} Kita lanjut bahas topik tadi ya. Ada yang ingin kamu tanyakan lagi?` : english ? `${current} What would you like to know?` : `${current} Ada yang mau kamu tanyakan?`;
+  const answer = hasTopic
+    ? english ? `${current} Let's continue with the topic we discussed. What else would you like to ask?` : `${current} Kita lanjut bahas topik tadi ya. Ada yang ingin kamu tanyakan lagi?`
+    : english ? `${current} What would you like to know?` : `${current} Ada yang mau kamu tanyakan?`;
   return { intent: "Greeting", summary: "The user sent a greeting.", missing_context: [], recommended_action: "Invite the user to share their question or issue.", answer, draft_reply: answer, citations: [], confidence: "high" };
 }
 
@@ -252,6 +256,8 @@ function titleMatches(title: string, canonical: string) {
 export function pointArticleTitle(query: string) {
   const normalized = query.toLowerCase();
   if (/\b(saldo|poin|point)\b.*\b(0|nol|hilang|kosong)\b|\b(0|nol|hilang|kosong)\b.*\b(saldo|poin|point)\b/.test(normalized)) return POINT_ARTICLE_TITLE_MATCHES[0];
+  // English phrasing ("points balance 0", "my points are zero"); additive, Indonesian patterns above unchanged.
+  if (/\b(points?|balance)\b.*\b(0|zero|missing|empty)\b|\b(0|zero|missing|empty)\b.*\b(points?|balance)\b/.test(normalized)) return POINT_ARTICLE_TITLE_MATCHES[0];
   if (/\b(riwayat|history|histori)\b/.test(normalized) && /\b(pesanan|order|transaksi)\b/.test(normalized) && /\b(tidak|beda|berbeda|cocok|sesuai|match)\b/.test(normalized) && !/\bpesanan umum\b|\bgeneral order\b/.test(normalized)) return POINT_ARTICLE_TITLE_MATCHES[1];
   if (/\b(riwayat|history|histori)\b.*\b(pesanan umum|general order)\b|\b(pesanan umum|general order)\b.*\b(riwayat|history|histori|konsisten|selisih)/.test(normalized)) return POINT_ARTICLE_TITLE_MATCHES[3];
   if (/\b(riwayat|history|histori)\b.*\b(tidak|beda|berbeda|cocok|sesuai|match|selisih)\b|\b(tidak|beda|berbeda|cocok|sesuai|match|selisih)\b.*\b(riwayat|history|histori)\b/.test(normalized)) return POINT_ARTICLE_TITLE_MATCHES[1];
@@ -262,7 +268,7 @@ export function pointArticleTitle(query: string) {
 
 export function isPointTopic(query: string) {
   const normalized = query.toLowerCase();
-  return /\b(poin|point)\b/i.test(normalized) || pointArticleTitle(normalized) !== null ||
+  return /\b(poin|points?)\b/i.test(normalized) || pointArticleTitle(normalized) !== null ||
     (/\b(saldo|balance)\b/.test(normalized) && /\b(0|nol|hilang|kosong)\b/.test(normalized));
 }
 
@@ -334,8 +340,12 @@ export function contextSatisfied(context: string | null, query: string) {
   return false;
 }
 
-export function missingContextMessage(context: string | null, query: string) {
-  return context && !contextSatisfied(context, query) ? `Mohon minta ${context} sebelum kasus ini diverifikasi.` : null;
+export function missingContextMessage(context: string | null, query: string, lang = detectLanguage(query)) {
+  return context && !contextSatisfied(context, query)
+    ? lang === "en"
+      ? `Please provide the ${contextLabel(context, lang)} before the case can be verified.`
+      : `Mohon minta ${context} sebelum kasus ini diverifikasi.`
+    : null;
 }
 
 // Must match an actual "please send us the order/account number" request —
