@@ -1,5 +1,16 @@
 import { requireUser, getSupabaseAdmin } from "@/lib/db";
-import { errorResponse } from "@/lib/validation";
+import { errorResponse, readJson, readText } from "@/lib/validation";
+
+export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  try {
+    const user = await requireUser(request);
+    const { id } = await params;
+    const title = readText((await readJson(request)).title, "title", 120);
+    const { data, error } = await getSupabaseAdmin().from("conversations").update({ title }).eq("id", id).eq("created_by", user.id).select("id,title,updated_at").single();
+    if (error || !data) throw new Error("Conversation not found");
+    return Response.json(data);
+  } catch (error) { return errorResponse(error); }
+}
 
 export async function DELETE(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {

@@ -28,6 +28,7 @@ async function expectRejectedCron(headers?: Record<string, string>) {
 async function main() {
   await expectUnauthenticated("/api/conversations");
   await expectUnauthenticated("/api/conversations", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+  await expectUnauthenticated("/api/conversations/00000000-0000-4000-8000-000000000000", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ title: "x" }) });
   await expectUnauthenticated("/api/admin/notion/sync", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
   await expectUnauthenticated("/api/conversations/00000000-0000-4000-8000-000000000000/messages", {
     method: "POST",
