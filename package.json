@@ -10,6 +10,7 @@
     "test:e2e": "playwright test",
     "test:e2e:headed": "playwright test --headed",
     "typecheck": "tsc --noEmit",
+    "check": "npx tsx lib/assistant-check.ts",
     "evaluate:knowledge": "npx tsx scripts/evaluate-knowledge.mjs"
   },
   "dependencies": {

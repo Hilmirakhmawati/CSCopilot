@@ -1,0 +1,3 @@
+export function EmptyState({ english }: { english: boolean }) {
+  return <div className="px-6 pb-2.5 pt-16 text-center"><h2 className="mx-auto mb-2 inline-block rounded-[14px] bg-primary/10 px-4 py-2 text-2xl font-bold tracking-tight text-primary"><span aria-hidden="true">✦</span> {english ? "Start a new conversation" : "Mulai percakapan baru"} <span aria-hidden="true">✦</span></h2><p className="mx-auto max-w-[420px] leading-7 text-muted-foreground">{english ? "Describe the customer issue naturally. CSCoPilot will find relevant knowledge and provide an answer with source references." : "Ceritakan issue customer dengan bahasa natural. CSCoPilot akan mencari knowledge yang relevan dan memberikan jawaban beserta source reference."}</p></div>;
+}

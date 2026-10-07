@@ -26,6 +26,7 @@ export function AppShell({ children, active }: { children: React.ReactNode; acti
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const nav = [
+    { href: "/dashboard", key: "dashboard" as const, label: "Dashboard", icon: Sparkles },
     { href: "/assistant", key: "assistant" as const, label: "AI Assistant", icon: Bot },
     ...(isAdmin ? [{ href: "/admin/audit", key: "audit" as const, label: "Audit Log", icon: ShieldCheck }] : []),
   ];

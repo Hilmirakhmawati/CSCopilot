@@ -56,7 +56,7 @@ function selectOf(property: Property | undefined) {
 // page body) is intentionally left out of what gets synced.
 export async function readChatbotAllowedDatabaseRows(databaseId: string) {
   const notion = getNotion();
-  const rows: { notion_page_id: string; title: string; url: string | null; content: string; last_edited_time: string | null }[] = [];
+  const rows: { notion_page_id: string; title: string; url: string | null; category: string | null; content: string; last_edited_time: string | null }[] = [];
   let cursor: string | undefined;
   do {
     const page = await withRetry(() => notion.databases.query({ database_id: databaseId, start_cursor: cursor }));
@@ -96,6 +96,8 @@ export async function readChatbotAllowedDatabaseRows(databaseId: string) {
         notion_page_id: raw.id,
         title,
         url: "url" in raw ? (raw.url as string) : null,
+        // Optional select/status property named "Category"; null when the database has none.
+        category: selectOf(properties["Category"]) || null,
         content: contentLines.join("\n"),
         last_edited_time: "last_edited_time" in raw ? (raw.last_edited_time as string) : null,
       });

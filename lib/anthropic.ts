@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { GroundedAnswer, KnowledgeDocument } from "./assistant-types";
-import { classifyConversationIntent, continuationSignal, greetingAnswer, isClosingMessage, isCustomerContextRequest, isFeedbackMessage, isGreetingOnly, isPointTopic, isSarcasticOrDismissive, missingContextMessage, pointAnswer, requiredContext, reviseCustomerDraft, sourceLine, suppliedIdentifier, withThanksGreeting } from "./retrieval";
+import { SEARCH_STOPWORDS, documentsForTopic, hasExplicitIssueTopic, classifyConversationIntent, continuationSignal, greetingAnswer, isClosingMessage, isCustomerContextRequest, isFeedbackMessage, isGreetingOnly, isPointTopic, isVagueTopicOnly, isSarcasticOrDismissive, missingContextMessage, pointAnswer, requiredContext, reviseCustomerDraft, sourceLine, suppliedIdentifier, withThanksGreeting } from "./retrieval";
 import { withRetry } from "./retry";
 import { enforceMissingContextInvariant, sanitizeAnswer } from "./answer-safety";
 import { buildGuidance } from "./case-guidance";
@@ -29,7 +29,7 @@ function isUnavailableAnthropicError(error: unknown) {
 }
 
 function words(value: string) {
-  return new Set(value.toLowerCase().match(/[a-z0-9À-ɏ]+/g) ?? []);
+  return new Set((value.toLowerCase().match(/[a-z0-9À-ɏ]+/g) ?? []).filter((word) => !SEARCH_STOPWORDS.has(word)));
 }
 
 // Claude never sees document UUIDs (kept out of the prompt so it can't leak
@@ -125,9 +125,6 @@ function latestPointTopic(history: Array<{ role: "user" | "assistant"; content: 
   return [...history].reverse().find((message) => message.role === "user" && isPointTopic(message.content));
 }
 
-function hasExplicitIssueTopic(issue: string) {
-  return /\b(login|akun|account|error|pesan|masalah|kendala|gagal|pembayaran|refund|order|pesanan)\b/i.test(issue);
-}
 
 
 function isFollowUpQuestion(issue: string) {
@@ -423,7 +420,9 @@ Return JSON matching the requested schema.`;
 
 // Guidance (steps, case understanding, knowledge status) is derived from the
 // cited article only, for every path, so the model never writes it.
-export async function generateGroundedAnswer(issue: string, documents: KnowledgeDocument[], history: Array<{ role: "user" | "assistant"; content: string }> = [], contextSummary = "", currentDraft = "", lang: ResponseLanguage = detectLanguage(issue)): Promise<GroundedAnswer> {
+export async function generateGroundedAnswer(issue: string, allDocuments: KnowledgeDocument[], history: Array<{ role: "user" | "assistant"; content: string }> = [], contextSummary = "", currentDraft = "", lang: ResponseLanguage = detectLanguage(issue)): Promise<GroundedAnswer> {
+  // Point articles never answer a non-point topic ("tidak bisa checkout"): drop them so the no-knowledge path runs.
+  const documents = documentsForTopic(issue, history, allDocuments);
   const guided = buildGuidance(await generateBaseAnswer(issue, documents, history, contextSummary, currentDraft, lang), documents, issue, history, Date.now(), lang);
   return lang === "en" ? translateGuidance(guided) : guided;
 }
@@ -517,6 +516,19 @@ async function translateGuidance(answer: GroundedAnswer): Promise<GroundedAnswer
 async function generateBaseAnswer(issue: string, documents: KnowledgeDocument[], history: Array<{ role: "user" | "assistant"; content: string }> = [], contextSummary = "", currentDraft = "", lang: ResponseLanguage = detectLanguage(issue)): Promise<GroundedAnswer> {
   if (isGreetingOnly(issue)) return greetingAnswer(issue, history, lang);
   if (isClosingMessage(issue)) return fallback(issue, documents, history, currentDraft, lang);
+  if (isVagueTopicOnly(issue) && !history.some((message) => message.role === "user" && isPointTopic(message.content))) {
+    const english = lang === "en";
+    return {
+      intent: "Needs clarification",
+      summary: "The message names a topic but no concrete issue.",
+      missing_context: [english ? "What exactly is the issue with the point balance?" : "Masalah apa yang terjadi pada saldo poin?"],
+      recommended_action: "Ask what the customer is experiencing before searching the knowledge base.",
+      answer: english ? "What is the issue with the point balance? For example, is it showing 0, or does it not match the order history?" : "Kendala apa yang terjadi pada saldo poin? Contoh: saldo tampil 0, atau riwayat poin tidak sesuai dengan pesanan?",
+      draft_reply: "",
+      citations: [],
+      confidence: "low",
+    };
+  }
   const scope = resolveProjectScope(issue, history);
   if (scope.ambiguous) return fallback(issue, documents, history, currentDraft, lang);
   const scopedDocuments = scope.project ? filterDocumentsByProject(documents, scope.project) : documents;
@@ -527,6 +539,9 @@ async function generateBaseAnswer(issue: string, documents: KnowledgeDocument[],
   // tell CS in `answer` only; draft_reply is customer-facing and must stay clean.
   const untranslatedPointAnswer = () => {
     const safe = sanitizeAnswer(deterministicPointAnswer!, lang);
+    // Next-step guidance is internal CS text with no customer draft. Translate the Indonesian
+    // article steps; never fall through to the generic "balance is 0" answer and draft below.
+    if (lang === "en" && safe.intent === "Customer guidance") return { ...safe, answer: deterministicGuidanceEnglish(safe.answer), draft_reply: "" };
     if (lang !== "en" || detectLanguage(safe.answer) !== "id") return safe;
     const identifierReceived = safe.intent === "Identifier received";
     const identifier = /\bakun\b/i.test(safe.answer) ? "account number" : /\bpesanan\b/i.test(safe.answer) ? "order number" : "provided identifier";
@@ -539,6 +554,9 @@ async function generateBaseAnswer(issue: string, documents: KnowledgeDocument[],
     return { ...safe, answer, draft_reply };
   };
   const safePointFallback = () => deterministicPointAnswer ? untranslatedPointAnswer() : undefined;
+  // Guidance is deterministic and internal. Never send it through Claude, which can
+  // replace the next-step answer with the original issue summary or an old draft.
+  if (deterministicPointAnswer?.intent === "Customer guidance") return untranslatedPointAnswer();
   if (deterministicPointAnswer && !canTranslatePointAnswer) return untranslatedPointAnswer();
   if (!scopedDocuments.length || !configuredApiKey() || process.env.CSCOPILOT_NO_AI === "1") return sanitizeAnswer(fallback(issue, scopedDocuments, modelHistory, currentDraft, lang), lang);
   const context = scopedDocuments.map((doc, index) => `REFERENCE ${index + 1}\nCONTENT:\n${doc.content}`).join("\n\n");

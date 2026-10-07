@@ -1,0 +1,3 @@
+export function ChatHeader({ title, english }: { title: string; english: boolean }) {
+  return <header className="hidden h-20 shrink-0 items-center justify-between border-b bg-white px-8 lg:flex"><div><p className="text-xs font-bold text-primary">Customer Support Timedoor Indonesia</p><h1 className="mt-0.5 text-[19px] font-bold">{title}</h1></div><div className="flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700"><span className="h-2 w-2 rounded-full bg-emerald-500 shadow-[0_0_6px_2px_rgba(16,185,129,.45)]" aria-hidden="true" />{english ? "Knowledge active" : "Knowledge aktif"}</div></header>;
+}

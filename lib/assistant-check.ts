@@ -1,6 +1,6 @@
 import assert from "assert/strict";
 import { fallback, generateGroundedAnswer, generateNoAiAnswer, mapCitations, extractFirstJsonObject } from "./anthropic";
-import { POINT_ARTICLE_TITLE_MATCHES, classifyConversationIntent, continuationSignal, contextSatisfied, isClosingMessage, isCustomerContextRequest, isFeedbackMessage, isSarcasticOrDismissive, isAccountLabelOnly, isOrderLabelOnly, isGreetingOnly, greetingAnswer, withThanksGreeting, pointAnswer, pointArticleTitle, isPointTopic, selectPointArticle } from "./retrieval";
+import { POINT_ARTICLE_TITLE_MATCHES, classifyConversationIntent, continuationSignal, contextSatisfied, isClosingMessage, isCustomerContextRequest, isFeedbackMessage, isSarcasticOrDismissive, isAccountLabelOnly, isOrderLabelOnly, isGreetingOnly, isVagueTopicOnly, greetingAnswer, withThanksGreeting, pointAnswer, pointArticleTitle, isPointTopic, selectPointArticle, contentTerms, withoutPointArticles, documentsForTopic } from "./retrieval";
 import { activeContextForPrompt, trimHistoryToBudget, updateActiveContext } from "./context";
 import { readJson } from "./validation";
 import type { Citation, KnowledgeDocument } from "./assistant-types";
@@ -8,7 +8,7 @@ import { filterDocumentsByProject, projectNames, resolveProjectScope } from "./p
 import { enforceMissingContextInvariant, hasCustomerFacingSourceLeak, hasFabricatedCheckClaim, sanitizeAnswer } from "./answer-safety";
 import { buildGuidance, splitItems } from "./case-guidance";
 import { detectConversationLanguage, detectLanguage } from "./language";
-import { isSuppliedContextMessage, suppliedIdentifier } from "./retrieval";
+import { isGuidanceFollowUp, isSuppliedContextMessage, suppliedIdentifier } from "./retrieval";
 
 export { enforceMissingContextInvariant, hasCustomerFacingSourceLeak, hasFabricatedCheckClaim, sanitizeAnswer } from "./answer-safety";
 
@@ -104,6 +104,7 @@ if (process.argv[1]?.endsWith("assistant-check.ts")) {
   assert.equal(classifyConversationIntent("akunnya Rara 083119349229", pointDraftHistory, pointDraft), "supplied_context");
   assert.equal(classifyConversationIntent("nomor akun sudah dikirimkan, nama akunnya rara, nomornya 0831193487229 apa selanjutnya?", pointDraftHistory, pointDraft), "supplied_context");
   assert.equal(classifyConversationIntent("lalu apa saran yg bisa aku kasih ke client?", pointDraftHistory, pointDraft), "guidance_follow_up");
+  for (const text of ["trus selanjutnya apa?", "terus apa yang harus dilakukan?", "habis itu gimana?", "langkah berikutnya apa?", "setelah ini saya harus apa?", "what should I do next?", "what now?"]) assert.equal(isGuidanceFollowUp(text), true, text);
 
   // Legacy row: no Customer Reply field yet. Must never surface Customer
   // Action as a customer-facing draft — the app has to hold back and ask
@@ -230,6 +231,8 @@ if (process.argv[1]?.endsWith("assistant-check.ts")) {
   assert.equal(detectLanguage("083119349222 akun saya"), "id");
   assert.equal(suppliedIdentifier("121311425255 account daya")?.kind, "account");
   assert.equal(isSuppliedContextMessage("121311425255 account daya"), true);
+  assert.equal(suppliedIdentifier("183420200 berikut nomor akunnya")?.kind, "account");
+  assert.equal(isSuppliedContextMessage("183420200 berikut nomor akunnya"), true);
   const typoFollowUp = pointAnswer("121311425255 account daya", [{ ...zeroBalanceDocuments[0], content: zeroBalanceDocuments[0].content.replace("Nomor order", "Nomor akun").replace("nomor pesanan terkait", "nomor akun terkait") }], [{ role: "user", content: "Why is my point balance 0?" }]);
   assert.equal(typoFollowUp?.intent, "Identifier received");
   assert.doesNotMatch(`${typoFollowUp?.answer} ${typoFollowUp?.draft_reply}`, /Belum ada knowledge|Status Knowledge|pesan error/i);
@@ -294,6 +297,18 @@ if (process.argv[1]?.endsWith("assistant-check.ts")) {
       const translatedGuide = await generateGroundedAnswer("Why is my point balance 0?", [{ ...fullDoc, id: "g1", title: POINT_ARTICLE_TITLE_MATCHES[0] }], [], "", "", "en");
       assert.ok(translatedGuide.next_actions?.length);
       for (const item of [...(translatedGuide.next_actions ?? []), ...(translatedGuide.escalate_when ?? [])]) assert.notEqual(detectLanguage(item), "id", item);
+      // Reported: "What should I do next?" in English repeated the "balance is 0" answer and an account-number draft.
+      const englishNext = await generateGroundedAnswer("What should I do next?", [{ ...fullDoc, id: "g1", title: POINT_ARTICLE_TITLE_MATCHES[0] }], [
+        { role: "user", content: "Why is my point balance 0?" },
+        { role: "assistant", content: "Please provide the account number." },
+        { role: "user", content: "1561381478178" },
+        { role: "assistant", content: "The account number has been received." },
+      ], "", "", "en");
+      assert.equal(englishNext.intent, "Customer guidance");
+      assert.equal(englishNext.draft_reply, "");
+      assert.match(englishNext.answer, /Next steps/i);
+      assert.doesNotMatch(englishNext.answer, /may display a point balance of 0|Cek riwayat|Bandingkan/i);
+      assert.notEqual(detectLanguage(englishNext.answer), "id", englishNext.answer);
       console.log("neutral English guidance check passed");
     } finally {
       if (previousNoAi === undefined) delete process.env.CSCOPILOT_NO_AI;
@@ -320,6 +335,15 @@ if (process.argv[1]?.endsWith("assistant-check.ts")) {
   assert.doesNotMatch(suppliedAccountAnswer?.answer ?? "", /Beberapa akun sempat menampilkan saldo poin 0/i);
   assert.equal(suppliedAccountAnswer?.missing_context.length, 0);
   assert.match(suppliedAccountAnswer?.draft_reply ?? "", /informasi (?:nomor )?akun sudah kami terima/i);
+  const nextStepAnswer = pointAnswer("trus selanjutnya apa?", accountRequiredDocuments, [
+    ...pointConversation,
+    { role: "user", content: "12334455335 ini nomernya" },
+  ]);
+  assert.equal(nextStepAnswer?.intent, "Customer guidance");
+  assert.equal(nextStepAnswer?.verification_status, "not_verified");
+  assert.equal(nextStepAnswer?.draft_reply, "");
+  assert.doesNotMatch(nextStepAnswer?.answer ?? "", /Saldo poin dapat menampilkan 0/i);
+  assert.match(nextStepAnswer?.answer ?? "", /langkah|selanjutnya|manual/i);
 
   // Exact reported transcript: a later "no akun" confirms the preceding bare
   // number, and "itu aja?" asks for clarification about the active point topic.
@@ -732,6 +756,60 @@ if (process.argv[1]?.endsWith("assistant-check.ts")) {
   assert.equal(feedback.missing_context.some((item) => /Project belum jelas/i.test(item)), false);
   assert.notEqual(feedback.answer, "Maksudnya Project Inwan atau Project Cara?");
 
+  for (const message of ["terima kasih telahmembantu", "makasih banyak ya kak", "terima kasih sudah membantu", "thanks so much for the help", "Thank you, that helps", "thanks, that's helpful", "thank you so much, really appreciate it", "thanks a lot"]) assert.equal(isClosingMessage(message), true, message);
+  // Reported: a bare "saldo" was answered as if the balance showed 0.
+  for (const message of ["saldo", "poin", "Saldo dong", "my points", "balance"]) assert.equal(isVagueTopicOnly(message), true, message);
+  for (const message of ["saldo 0", "saldo poin saya 0", "saldo tidak sesuai", "1213142526", "cek saldo akun 123"]) assert.equal(isVagueTopicOnly(message), false, message);
+  void (async () => {
+    const vagueAnswer = await generateGroundedAnswer("saldo", zeroBalanceDocuments, [], "", "", "id");
+    assert.equal(vagueAnswer.intent, "Needs clarification");
+    assert.equal(vagueAnswer.draft_reply, "");
+    assert.equal(vagueAnswer.citations.length, 0);
+    // Same bare word in a chat that already has unrelated messages must still ask, not invent a "balance 0" case.
+    const vagueLater = await generateGroundedAnswer("saldo", zeroBalanceDocuments, [{ role: "user", content: "halo" }, { role: "assistant", content: "Halo, ada yang bisa dibantu?" }, { role: "user", content: "terima kasih" }, { role: "assistant", content: "Sama-sama." }], "", "", "id");
+    assert.equal(vagueLater.intent, "Needs clarification");
+    assert.equal(vagueLater.draft_reply, "");
+    console.log("vague topic check passed");
+  })();
+  // Reported: "aku tidak bisa checkout gimana ya" was answered with the point-usage article.
+  assert.deepEqual(contentTerms("aku tidak bisa checkout gimana ya"), ["checkout"]);
+  assert.deepEqual(contentTerms("Kenapa saldo poin 0?"), ["saldo", "poin"]);
+  assert.deepEqual(withoutPointArticles(zeroBalanceDocuments), []);
+  assert.equal(documentsForTopic("aku tidak bisa checkout gimana ya", [], zeroBalanceDocuments).length, 0);
+  assert.equal(documentsForTopic("Kenapa saldo poin 0?", [], zeroBalanceDocuments).length, zeroBalanceDocuments.length);
+  assert.equal(fallback("aku tidak bisa checkout gimana ya", zeroBalanceDocuments).citations.length, 0);
+  void (async () => {
+    const previousNoAi = process.env.CSCOPILOT_NO_AI;
+    process.env.CSCOPILOT_NO_AI = "1";
+    try {
+      const pointHistory = [{ role: "user" as const, content: "Kenapa saldo poin 0?" }, { role: "assistant" as const, content: "Mohon kirimkan nomor pesanan." }];
+      const cases: Array<[string, "id" | "en", typeof pointHistory]> = [
+        ["aku tidak bisa checkout gimana ya", "id", []],
+        ["aku tidak bisa checkout gimana ya", "id", pointHistory],
+        ["I can't checkout, what should I do?", "en", []],
+        ["I can't checkout, what should I do?", "en", pointHistory],
+        ["login gagal", "id", []],
+        ["bagaimana refund order", "id", []],
+        ["how do I reset my password", "en", []],
+      ];
+      for (const [message, lang, history] of cases) {
+        // Pass the point article as if retrieval leaked it: the gate must still drop it.
+        const answer = await generateGroundedAnswer(message, zeroBalanceDocuments, history, "", "", lang);
+        const label = `${message} (${history.length})`;
+        assert.equal(answer.citations.length, 0, label);
+        assert.equal(answer.draft_reply, "", label);
+        assert.equal(answer.knowledge_status, "unavailable", label);
+        assert.equal(answer.next_actions?.length, 3, label);
+        assert.match(answer.next_actions?.[0] ?? "", lang === "en" ? /^Collect/ : /^Kumpulkan/, label);
+        assert.doesNotMatch(answer.answer, /topik poin sebelumnya|previous point topic/i, label);
+      }
+      console.log("off-topic gate check passed");
+    } finally {
+      if (previousNoAi === undefined) delete process.env.CSCOPILOT_NO_AI;
+      else process.env.CSCOPILOT_NO_AI = previousNoAi;
+    }
+  })();
+  for (const message of ["terima kasih, tapi saldo masih 0", "makasih, nomor akun 12345678", "thanks, what next?"]) assert.equal(isClosingMessage(message), false, message);
   for (const message of ["thank you", "thanks", "ok thanks", "thank you, got it", "oke deh thank you", "sip thank you", "ok deh thank you", "makasih ya", "terima kasih ya"]) {
     assert.equal(isClosingMessage(message), true, message);
     const acknowledgement = generateNoAiAnswer(message, [], inwanTopicHistory);

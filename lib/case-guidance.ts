@@ -1,5 +1,5 @@
 import type { GroundedAnswer, KnowledgeDocument } from "./assistant-types";
-import { continuationSignal, isAccountLabelOnly, isOrderLabelOnly, requiredContext, sourceLine, suppliedIdentifier } from "./retrieval";
+import { continuationSignal, isAccountLabelOnly, isIdentifierRequestStep, isOrderLabelOnly, requiredContext, sourceLine, suppliedIdentifier } from "./retrieval";
 import { detectLanguage, type ResponseLanguage } from "./language";
 
 type Turn = { role: "user" | "assistant"; content: string };
@@ -68,7 +68,9 @@ export function buildGuidance(answer: GroundedAnswer, documents: KnowledgeDocume
     return { ...answer, knowledge_status: "unavailable", next_actions: english ? NO_DOC_STEPS_EN : NO_DOC_STEPS };
   }
 
-  const steps = splitItems(sourceLine(document.content, "Troubleshooting Steps"));
+  const allSteps = splitItems(sourceLine(document.content, "Troubleshooting Steps"));
+  // Supplied identifier already covers "ask for the account/order number" steps.
+  const steps = suppliedKinds(query, history).size ? allSteps.filter((step) => !isIdentifierRequestStep(step)) : allSteps;
   const escalate = splitItems(sourceLine(document.content, "Escalate When"));
   const hasReply = Boolean(sourceLine(document.content, "Customer Reply"));
   const knowledge_missing = [!steps.length && "Troubleshooting Steps", !hasReply && "Customer Reply"].filter((item): item is string => Boolean(item));

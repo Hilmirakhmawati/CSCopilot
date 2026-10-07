@@ -20,7 +20,7 @@ function looksLikeBareIdentifier(word: string) {
 // Words that only ever label an identifier being supplied ("Nomor pesanannya
 // 1234567890"), never a complaint on their own. Combined with an identifier
 // elsewhere in the message, they still carry no new topic of their own.
-const identifierLabelWords = new Set(["nomor", "nomer", "no", "id", "pesanan", "pesanannya", "order", "akun", "akunnya", "email", "account", "number", "customer", "member", "user", "pelanggan"]);
+const identifierLabelWords = new Set(["nomor", "nomer", "no", "id", "pesanan", "pesanannya", "order", "akun", "akunnya", "email", "account", "number", "customer", "member", "user", "pelanggan", "berikut", "adalah", "yaitu", "nih", "tuh"]);
 
 // "customer number", "member id", "nomor pelanggan" ... all name the customer's account.
 const CUSTOMER_LABEL = String.raw`(?:(?:customer|member|user|pelanggan)\s+(?:number|id|no)|nom[eo]r\s+(?:customer|pelanggan|member))`;
@@ -65,7 +65,7 @@ const feedbackMarkers = /(?:ya\s+terus\s+gimana\s+dong|masa\s+cuma\s+itu|masih\s
 const draftRegenerationMarkers = /\b(?:buat(?:kan)?|generate|regenerasi|alternatif|lainnya|baru)\b[\s\w-]{0,40}\b(?:draft|balasan)\b|\b(?:draft|balasan)\b[\s\w-]{0,40}\b(?:lainnya|alternatif|baru)\b/i;
 const draftFeedbackMarkers = /\b(?:draft|balasan)\b[\s\w-]{0,30}\b(?:belum\s+sesuai|kurang|tidak\s+sesuai)\b/i;
 const greetingEditMarkers = /\b(?:kurang|tambah(?:kan)?)\b[\s\w-]{0,20}\b(?:isi\s+)?sapaan\b|\b(?:sapaan|salam)\b.*\b(?:kurang|tambah(?:kan)?)\b/i;
-const suppliedContextMarkers = /\b(?:customer|member|user|pelanggan)\s+(?:number|id|no)\b[^.!?\n]{0,40}\b\d{6,}\b|\b\d{6,}\b[^.!?\n]{0,40}\b(?:(?:customer|member|user|pelanggan)\s+(?:number|id|no)|nom[eo]r\s+(?:customer|pelanggan|member))\b|\bnom[eo]r\s+(?:customer|pelanggan|member)\b[^.!?\n]{0,40}\b\d{6,}\b|\b(?:ini|berikut)\s+(?:akun(?:n?ya)?|account|nom[eo]r\s+(?:pesanan|order|akun)|email)\b|\b(?:akun(?:n?ya)?|account|id\s+akun|nom[eo]r\s+(?:pesanan|order|akun)|email)\s*[:#-]?\s*(?:\d{6,}|[\w.+-]+@[\w.-]+\.[a-z]{2,})|\b(?:this|that)\s+(?:account|order)(?:\s+(?:data|number|info))?\b|\b\d{6,}\b[^.!?\n]{0,40}\b(?:this|that)\s+(?:account|order)(?:\s+(?:data|number|info))?\b|\b\d{6,}\b[^.!?\n]{0,40}\b(?:account|order)(?:\s+(?:data|number|info))?\b/i;
+const suppliedContextMarkers = /\b(?:customer|member|user|pelanggan)\s+(?:number|id|no)\b[^.!?\n]{0,40}\b\d{6,}\b|\b\d{6,}\b[^.!?\n]{0,40}\b(?:(?:customer|member|user|pelanggan)\s+(?:number|id|no)|nom[eo]r\s+(?:customer|pelanggan|member|akun)(?:nya)?)\b|\bnom[eo]r\s+(?:customer|pelanggan|member)\b[^.!?\n]{0,40}\b\d{6,}\b|\b(?:ini|berikut)\s+(?:akun(?:n?ya)?|account|nom[eo]r\s+(?:pesanan|order|akun)(?:n?ya)?|email)\b|\b(?:akun(?:n?ya)?|account|id\s+akun|nom[eo]r\s+(?:pesanan|order|akun)|email)\s*[:#-]?\s*(?:\d{6,}|[\w.+-]+@[\w.-]+\.[a-z]{2,})|\b(?:this|that)\s+(?:account|order)(?:\s+(?:data|number|info))?\b|\b\d{6,}\b[^.!?\n]{0,40}\b(?:this|that)\s+(?:account|order)(?:\s+(?:data|number|info))?\b|\b\d{6,}\b[^.!?\n]{0,40}\b(?:account|order)(?:\s+(?:data|number|info))?\b/i;
 const accountIdentifierPattern = /\b(?:akun(?:n?ya)?|account|id\s+akun|nom[eo]r\s+akun)\b[^.!?\n]{0,100}?\b\d{6,}\b/i;
 const accountLabelOnlyPattern = /\b(?:akun(?:n?ya)?|account|id\s+akun|nom[eo]r\s+akun(?:n?ya)?)\b/i;
 const orderLabelOnlyPattern = /\b(?:pesanan(?:nya)?|order|nom[eo]r\s+(?:pesanan|order)|id\s+(?:pesanan|order))\b/i;
@@ -127,8 +127,25 @@ export function isCaseUpdate(query: string) {
   return caseUpdateMarkers.test(query);
 }
 
+// Short "what now?" questions asked after info was supplied. Phrased many ways
+// ("trus selanjutnya apa", "terus aku harus ngapain", "habis itu gimana", "what next"),
+// so match the pieces (a next-step word + a question cue) instead of one phrase.
+const nextStepWord = /\b(?:selanjutnya|berikutnya|kelanjutan(?:nya)?|lanjutan(?:nya)?|lanjut|(?:setelah|sesudah|habis|abis|usai)\s+(?:itu|ini|tu))\b/i;
+const nextStepAsk = /\b(?:apa|apaan|apakah|gimana|bagaimana|ngapain|harus|mesti|perlu|dilakukan)\b|\?/i;
+const nextStepQuestion = /\b(?:selanjutnya|berikutnya|kelanjut(?:an|nya)|lanjutan(?:nya)?|setelah\s+itu|sesudah\s+itu|habis\s+itu|abis\s+itu)\b[\s\w-]{0,30}\b(?:apa|gimana|bagaimana|ngapain|harus|mesti|perlu|dilakukan)\b|\b(?:apa|gimana|bagaimana)\b[\s\w-]{0,30}\b(?:selanjutnya|berikutnya|setelah\s+itu|sesudah\s+itu|habis\s+itu|lanjut)\b/i;
+const doNextPhrase = /\bapa\s+(?:yang\s+)?(?:harus|perlu|mesti)\s+(?:(?:aku|saya|gue|kita|kami|cs)\s+)?(?:lakukan|lakuin|kerjakan|kerjain|dilakukan)\b|\b(?:sekarang|skrg|terus|trus|lalu|lantas|kemudian)\s+(?:(?:aku|saya|gue|kita|cs)\s+)?(?:harus\s+)?(?:ngapain|apa(?:\s+lagi)?|gimana|bagaimana)\s*\??\s*$|\bwhat\s+(?:now|next)\b|\bthen\s+what\b|\bwhat(?:'s|\s+is)?\s+(?:the\s+)?next\b|\bwhat\s+(?:should|do|can|shall)\s+(?:i|we)\s+do\b|\b(?:next|following)\s+steps?\b/i;
+const mustDoPhrase = /\b(?:harus|mesti)\s+(?:(?:aku|saya|gue|kita|kami|cs)\s+)?(?:ngapain|gimana|bagaimana|apa)\b/i;
+
 export function isGuidanceFollowUp(query: string) {
-  return guidanceFollowUpMarkers.test(query);
+  if (guidanceFollowUpMarkers.test(query)) return true;
+  if (isFeedbackMessage(query)) return false;
+  const words = query.toLowerCase().match(/[a-z0-9À-ɏ'-]+/g) ?? [];
+  if (words.length === 0 || words.length > 12) return false;
+  if (doNextPhrase.test(query)) return true;
+  if (nextStepQuestion.test(query)) return true;
+  if (nextStepWord.test(query) && nextStepAsk.test(query)) return true;
+  // "harus gimana?" alone is a next-step question; with a fresh complaint ("saldo poin 0 harus gimana") it is a new issue.
+  return mustDoPhrase.test(query) && words.length <= 6 && !isPointTopic(query);
 }
 
 export function classifyConversationIntent(
@@ -150,9 +167,24 @@ export function classifyConversationIntent(
 
 // Pleasantries/closers ("oke terima kasih") need no knowledge search at all —
 // searching would just reuse whatever the last topic's documents were.
+const thanksPattern = /\b(?:terima\s*kasih|terimakasih|makasih|thanks?|thank\s+you|thx|tengkyu|trims)\b/;
+// Words that may surround a thank-you without adding a new question or issue.
+const closingFillers = new Set([
+  "oke", "ok", "okay", "baik", "siap", "noted", "sip", "deh", "ya", "yaa", "kak", "kakak", "min", "gan", "banget", "sekali", "sangat", "banyak",
+  "atas", "bantuannya", "bantuan", "infonya", "informasinya", "penjelasannya", "jawabannya", "got", "it", "so", "much", "very", "for", "your", "the", "help", "all",
+  "that", "that's", "thats", "this", "helps", "helped", "helpful", "great", "perfect", "appreciate", "appreciated", "really", "a", "lot", "you", "guys", "again", "is", "was", "has",
+]);
+const closingHelpPhrase = /\b(?:telah|sudah|udah|sdh)?\s*(?:membantu|bantu|ngebantu|mmbantu|membantuannya)\b/g;
+
 export function isClosingMessage(query: string) {
   const normalized = query.toLowerCase().trim().replace(/[.,!?]/g, "").replace(/\s+/g, " ");
-  return /^(?:(?:oke|ok|okay|baik|siap|noted|sip|makasih|terima kasih|thanks|thank you)(?: deh)?(?: terima kasih| makasih| thanks| thank you| got it| kak| ya)?)$/.test(normalized);
+  if (/^(?:(?:oke|ok|okay|baik|siap|noted|sip|makasih|terima kasih|thanks|thank you)(?: deh)?(?: terima kasih| makasih| thanks| thank you| got it| kak| ya)?)$/.test(normalized)) return true;
+  // "terima kasih telahmembantu", "makasih banyak ya kak": a thank-you made only of thanks and filler words.
+  if (!thanksPattern.test(normalized) || /\d/.test(normalized)) return false;
+  const words = normalized.split(" ");
+  if (words.length > 8) return false;
+  const rest = normalized.replace(new RegExp(thanksPattern.source, "g"), " ").replace(closingHelpPhrase, " ").split(" ").filter(Boolean);
+  return rest.every((word) => closingFillers.has(word)) && words.length > 0;
 }
 
 const greetingRoots = [
@@ -162,6 +194,17 @@ const greetingRoots = [
 ];
 const timeGreetings = new Set(["pagi", "siang", "sore", "petang", "malam", "morning", "afternoon", "evening", "night"]);
 const issueWords = /\b(bayar|pembayaran|gagal|error|kenapa|bagaimana|gimana|tolong|help|mau|tanya|minta|lupa|login|password|lapor|komplain|kirim|request|order|pesanan|akun|refund|masalah|issue|kendala|customer|saldo|poin|point|tidak|bisa|cara|status|cek|check)\b/i;
+
+// Search fallback must not let common sentence words retrieve an unrelated article.
+// Keep this small and language-focused; product terms remain searchable.
+export const SEARCH_STOPWORDS = new Set([
+  "aku", "saya", "gue", "kami", "kita", "customer", "the", "my", "i", "me", "we", "our",
+  "tidak", "nggak", "gak", "bisa", "bisa", "mau", "ingin", "tolong", "please", "can", "could", "do", "does", "how", "what", "should", "is", "are", "to", "for", "a", "an", "and", "or", "ya", "yah", "dong", "kak", "min", "gimana", "bagaimana", "kenapa", "why", "what", "itu", "ini", "nya", "sih", "of", "on", "in", "my",
+]);
+
+export function contentTerms(value: string) {
+  return [...new Set((value.toLowerCase().match(/[a-z0-9À-ɏ]{3,}/g) ?? []).filter((term) => !SEARCH_STOPWORDS.has(term)))];
+}
 
 function normalizeGreeting(query: string) {
   return query
@@ -276,8 +319,43 @@ export function isPointTopic(query: string) {
     (/\b(saldo|balance)\b/.test(normalized) && /\b(0|nol|hilang|kosong)\b/.test(normalized));
 }
 
+// A bare topic word ("saldo", "poin", "my points") names no problem; answering it invents one.
+export function isVagueTopicOnly(query: string) {
+  const words = query.toLowerCase().match(/[a-z]+/g) ?? [];
+  if (/\d/.test(query) || !words.length || words.length > 3) return false;
+  const topic = new Set(["saldo", "poin", "point", "points", "balance", "reward", "rewards"]);
+  const filler = new Set(["my", "the", "a", "nya", "dong", "ya", "kak", "min", "tentang", "soal", "about", "ask", "tanya"]);
+  return words.some((word) => topic.has(word)) && words.every((word) => topic.has(word) || filler.has(word));
+}
+
 export function restrictToActivePointArticles(documents: KnowledgeDocument[]) {
   return documents.filter((document) => POINT_ARTICLE_TITLE_MATCHES.some((match) => titleMatches(document.title, match)));
+}
+
+// Point articles answer only point topics. For any other topic they are noise
+// (e.g. "tidak bisa checkout" must not surface the point-usage article).
+export function withoutPointArticles(documents: KnowledgeDocument[]) {
+  const points = new Set(restrictToActivePointArticles(documents).map((document) => document.id));
+  return documents.filter((document) => !points.has(document.id));
+}
+
+// Same topic rule retrieveKnowledge uses: a continuation inherits the recent point topic, anything else stands alone.
+export function hasExplicitIssueTopic(issue: string) {
+  return /\b(login|akun|account|error|pesan|masalah|kendala|gagal|pembayaran|refund|order|pesanan|checkout|bayar|payment|password|sandi|pengiriman|kirim|shipping|voucher|promo)\b/i.test(issue);
+}
+
+// An explicit non-point topic in the message itself ("I can't checkout, what should I do?") never inherits the previous point topic.
+// Narrower than hasExplicitIssueTopic: "akun"/"order"/"pesanan" are also context words in a point conversation ("no akun").
+const otherTopic = /\b(login|checkout|bayar|pembayaran|payment|refund|password|sandi|pengiriman|shipping|voucher|promo)\b/i;
+
+export function inheritsPriorTopic(query: string, history: Array<{ role: "user" | "assistant"; content: string }>) {
+  return continuationSignal(query, history) && !(otherTopic.test(query) && !isPointTopic(query));
+}
+
+export function documentsForTopic(query: string, history: Array<{ role: "user" | "assistant"; content: string }>, documents: KnowledgeDocument[]) {
+  const prior = history.filter((message) => message.role === "user").slice(-3).map((message) => message.content).join(" ");
+  const combined = prior && inheritsPriorTopic(query, history) ? `${prior} ${query}` : query;
+  return isPointTopic(combined) ? documents : withoutPointArticles(documents);
 }
 
 export function selectPointArticle(documents: KnowledgeDocument[], target: string | null) {
@@ -333,7 +411,7 @@ export function suppliedIdentifier(query: string): SuppliedIdentifier | null {
   const customerNumber = customerLabeled?.[1] ?? customerLabeled?.[2];
   if (customerNumber) return { kind: "account", value: customerNumber };
 
-  const accountAfter = query.match(/\b(\d{6,})\b[^.!?\n]{0,40}\b(?:(?:ini|this|that|itu)\s+)?(?:(?:nomor|no\.?|number)\s+)?(?:akun|account)(?:nya)?(?:\s+\w+)?\b/i)?.[1];
+  const accountAfter = query.match(/\b(\d{6,})\b[^.!?\n]{0,40}\b(?:(?:ini|this|that|itu|berikut)\s+)?(?:(?:nomor|no\.?|number)\s+)?(?:akun|account)(?:nya)?(?:\s+\w+)?\b/i)?.[1];
   if (accountAfter) return { kind: "account", value: accountAfter };
 
   // Number first, label after: "1617399381803 ini no pesanannya".
@@ -445,6 +523,28 @@ function suppliedContextAnswer(context: string, query: string, lang: ResponseLan
   return `Informasi ${label} sudah diterima sebagai info case. CS dapat mengecek ${issue} melalui langkah pada knowledge base sebelum memberi kabar ke customer.`;
 }
 
+function knowledgeItems(value: string) {
+  return value.split("|").map((item) => item.trim().replace(/^(?:\d+[.)]|[-•])\s*/, "")).filter(Boolean);
+}
+
+// A step that only asks CS to collect the account/order number is already done
+// once that number was supplied, so it is dropped from next-step guidance.
+export function isIdentifierRequestStep(step: string) {
+  return /^(?:konfirmasi|minta|tanyakan|kumpulkan|collect|confirm|ask(?:\s+for)?|request)\b.{0,40}\b(?:nomor|akun|pesanan|account|order)\b/i.test(step.trim());
+}
+
+function guidanceAnswer(document: KnowledgeDocument, english: boolean) {
+  const steps = knowledgeItems(sourceLine(document.content, "Troubleshooting Steps")).filter((step) => !isIdentifierRequestStep(step));
+  const escalation = knowledgeItems(sourceLine(document.content, "Escalate When"));
+  const list = (items: string[]) => items.map((step, index) => `${index + 1}. ${step}`).join("\n");
+  if (english) {
+    const body = steps.length ? `Next steps for CS:\n${list(steps)}` : "Next, CS can check the point balance, point history, and related transactions using the knowledge base.";
+    return `${body}${escalation.length ? `\n\nEscalate when: ${escalation.join("; ")}.` : ""}\n\nThe supplied information has not been verified; CS must check it manually.`;
+  }
+  const body = steps.length ? `Langkah selanjutnya untuk CS:\n${list(steps)}` : "Selanjutnya, CS dapat mengecek saldo poin melalui riwayat poin dan transaksi terkait sesuai knowledge base.";
+  return `${body}${escalation.length ? `\n\nEskalasi jika: ${escalation.join("; ")}.` : ""}\n\nInformasi yang diberikan belum diverifikasi; CS perlu mengeceknya secara manual.`;
+}
+
 export function pointAnswer(
   query: string,
   documents: KnowledgeDocument[],
@@ -454,7 +554,7 @@ export function pointAnswer(
 ): GroundedAnswer | null {
   const intent = classifyConversationIntent(query, history, currentDraft);
   const english = lang === "en";
-  const contextQuery = continuationSignal(query, history)
+  const contextQuery = inheritsPriorTopic(query, history)
     ? [...history.filter((message) => message.role === "user").slice(-3).map((message) => message.content), query].join(" ")
     : query;
   const target = pointArticleTitle(contextQuery);
@@ -524,6 +624,7 @@ export function pointAnswer(
     (context === "nomor pesanan terkait" || context === "nomor akun atau nomor pesanan terkait" || context === "nomor akun terkait") &&
     [...currentPointHistory].reverse().some((message) => suppliedIdentifier(message.content)?.kind === "unknown"),
   );
+  const priorContextSatisfied = Boolean(context && contextSatisfied(context, contextQuery));
   if (isSarcasticOrDismissive(query) && currentPointHistory.length > 0) {
     return {
       intent: "Needs clarification",
@@ -534,6 +635,25 @@ export function pointAnswer(
       draft_reply: "",
       citations,
       confidence: "low",
+    };
+  }
+  // Info already supplied earlier in the case ("trus selanjutnya apa?"): answer with the
+  // article's next steps instead of repeating the summary. Without supplied info, fall
+  // through so the usual "please send the account/order number" flow still applies.
+  const contextAlreadyReceived = Boolean(bareAccountNumber || contextWasSupplied || accountConfirmation || orderConfirmation || priorContextSatisfied);
+  if (intent === "guidance_follow_up" && contextAlreadyReceived) {
+    return {
+      intent: "Customer guidance",
+      summary,
+      missing_context: [],
+      recommended_action: action,
+      answer: guidanceAnswer(document, english),
+      // This is internal CS guidance, not a customer-ready result. Do not surface
+      // a draft that could be mistaken for a completed account check.
+      draft_reply: "",
+      citations,
+      confidence: "high",
+      verification_status: "not_verified",
     };
   }
   // Customer Action is an internal instruction to the agent, never a reply
@@ -583,6 +703,7 @@ export function pointAnswer(
           : `${summary}.`;
   return {
     intent: intent === "guidance_follow_up" ? "Customer guidance" : confirmed || contextWasSupplied ? "Identifier received" : "Point support issue",
+    // (guidance_follow_up reaches here only when no info was supplied yet)
     summary,
     missing_context: confirmed ? [] : missingContextItems,
     recommended_action: action,
@@ -600,7 +721,16 @@ export function pointAnswer(
 async function search(supabase: ReturnType<typeof getSupabaseAdmin>, query: string): Promise<KnowledgeDocument[]> {
   const result = await supabase.rpc("search_knowledge_documents", { search_query: query, result_limit: 20 });
   if (result.error) throw result.error;
-  return (result.data ?? []) as KnowledgeDocument[];
+  const documents = (result.data ?? []) as KnowledgeDocument[];
+  if (documents.length || query.trim().split(/\s+/).length < 4) return documents;
+  // Long customer sentences are too strict when every token must match. Retry
+  // with meaningful terms joined by OR; the first search remains preferred for
+  // precision, this only prevents a false zero-result retrieval.
+  const terms = contentTerms(query).slice(0, 10);
+  if (!terms.length) return documents;
+  const fallback = await supabase.rpc("search_knowledge_documents", { search_query: terms.join(" OR "), result_limit: 20 });
+  if (fallback.error) throw fallback.error;
+  return (fallback.data ?? []) as KnowledgeDocument[];
 }
 
 export async function retrieveKnowledge(query: string, history: Array<{ role: "user" | "assistant"; content: string }> = []): Promise<KnowledgeDocument[]> {
@@ -622,9 +752,9 @@ export async function retrieveKnowledge(query: string, history: Array<{ role: "u
     // keywords of its own — any hit it gets is incidental full-text noise, not
     // a real match. Prefer the history-combined query; only fall back to the
     // raw-query hit if the combined search truly finds nothing.
-    if (!continuation) return own;
+    if (!continuation) return withoutPointArticles(own);
     const combined = scopeResults(await search(supabase, scopedCombinedQuery));
-    return combined.length ? combined : own;
+    return withoutPointArticles(combined.length ? combined : own);
   }
 
   // Search by the canonical article title as a bounded fallback. This handles
