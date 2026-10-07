@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { GroundedAnswer, KnowledgeDocument } from "./assistant-types";
-import { classifyConversationIntent, continuationSignal, greetingAnswer, isClosingMessage, isCustomerContextRequest, isFeedbackMessage, isGreetingOnly, isPointTopic, isSarcasticOrDismissive, missingContextMessage, pointAnswer, requiredContext, reviseCustomerDraft, sourceLine, withThanksGreeting } from "./retrieval";
+import { classifyConversationIntent, continuationSignal, greetingAnswer, isClosingMessage, isCustomerContextRequest, isFeedbackMessage, isGreetingOnly, isPointTopic, isSarcasticOrDismissive, missingContextMessage, pointAnswer, requiredContext, reviseCustomerDraft, sourceLine, suppliedIdentifier, withThanksGreeting } from "./retrieval";
 import { withRetry } from "./retry";
 import { enforceMissingContextInvariant, sanitizeAnswer } from "./answer-safety";
 import { buildGuidance } from "./case-guidance";
@@ -259,7 +259,7 @@ export function fallback(issue: string, documents: KnowledgeDocument[], history:
     const supportedOwner = asksOwner && /\b(?:tim|team|oleh)\b/i.test(bestReply);
     const supportedStatus = asksStatus && bestReply.length > 0;
     const supportedFollowUp = (asksTimeline && supportedTimeline) || supportedOwner || supportedStatus;
-    const followUpContext = ranked[0] ? requiredContext(sourceLine(ranked[0].content, "Customer Action"), sourceLine(ranked[0].content, "Required Context")) : null;
+    const followUpContext = ranked[0] ? requiredContext(sourceLine(ranked[0].content, "Customer Action"), sourceLine(ranked[0].content, "Required Context"), ranked[0].title) : null;
     const followUpQuery = continuationSignal(issue, history)
       ? [...history.filter((message) => message.role === "user").slice(-3).map((message) => message.content), issue].join(" ")
       : issue;
@@ -301,7 +301,8 @@ export function fallback(issue: string, documents: KnowledgeDocument[], history:
     // fresh question about that old issue, reviving the old checklist would
     // misdirect the customer — ask about the CURRENT topic instead.
     const recentTopic = latestPointTopic(history);
-    const topicShifted = recentTopic && !isPointTopic(issue) && !hasExplicitIssueTopic(issue);
+    const suppliedIdentifierFollowUp = Boolean(suppliedIdentifier(issue) && continuationSignal(issue, history));
+    const topicShifted = recentTopic && !isPointTopic(issue) && !continuationSignal(issue, history) && !suppliedIdentifierFollowUp && !hasExplicitIssueTopic(issue);
     if (topicShifted) {
       const question = english
         ? "Could you clarify which part of the previous points topic is still unclear, or is this a new question?"
@@ -372,11 +373,11 @@ export function fallback(issue: string, documents: KnowledgeDocument[], history:
   // only Customer Reply may become draft_reply (same rule as pointAnswer).
   const replyLine = sourceLine(best.content, "Customer Reply");
   const explicitContext = sourceLine(best.content, "Required Context");
-  const context = requiredContext(actionLine, explicitContext);
+  const context = requiredContext(actionLine, explicitContext, best.title);
   const contextQuery = continuationSignal(issue, history)
     ? [...history.filter((message) => message.role === "user").slice(-3).map((message) => message.content), issue].join(" ")
     : issue;
-  const missingContext = missingContextMessage(context, contextQuery, detectLanguage(issue));
+  const missingContext = missingContextMessage(context, contextQuery, lang);
   const missing = [
     ...(missingContext ? [missingContext] : []),
     ...(!replyLine ? ["Artikel ini belum memiliki field Customer Reply. Tinjau dan lengkapi di Notion sebelum draft dapat dibuat otomatis."] : []),
@@ -385,7 +386,9 @@ export function fallback(issue: string, documents: KnowledgeDocument[], history:
   const continuation = continuationSignal(issue, history);
   const suppliedDetails = continuation && /\b(?:akun|akunnya|account|nomor\s+akun|pesanan|order|email)\b/i.test(issue);
   const currentTurnAnswer = suppliedDetails
-    ? "Informasi yang diberikan dicatat sebagai info case. Kasus ini perlu diverifikasi secara manual oleh CS sesuai knowledge yang tersedia."
+    ? (lang === "en"
+      ? "The details have been received and noted as case information. I don't have direct access to the customer's account data, so I cannot verify it from here. CS needs to check it manually using the steps in the available knowledge."
+      : "Informasi sudah diterima dan dicatat sebagai info case. Saya tidak memiliki akses langsung ke data akun customer, sehingga tidak dapat memverifikasinya dari sini. CS perlu memeriksanya secara manual sesuai langkah pada knowledge yang tersedia.")
     : answer;
   return {
     intent: intent === "guidance_follow_up" ? "Customer guidance" : suppliedDetails ? "Identifier received" : "Support issue",
@@ -407,40 +410,133 @@ Handle greetings naturally and briefly. For greeting-only messages, reply in the
 The messages before the final one are prior conversation history, for context only. Always answer the CURRENT CLIENT MESSAGE in the final user turn — never answer an earlier question instead, even if it is easier to answer or still unresolved.
 When the conversation mentions more than one project, product, or system, first identify which one the CURRENT CLIENT MESSAGE concerns — from an explicit name in that message, or otherwise the nearest prior message that clearly set the current topic. Use and cite only sources and context belonging to that project; never combine facts, causes, or solutions from a different project into the same answer, even if both were discussed earlier in this conversation.
 If you cannot tell which project or prior issue the CURRENT CLIENT MESSAGE refers to (for example, two projects were just discussed and the message only says "this"/"ini"/"itu"), do not guess. Say so and ask a short clarifying question in draft_reply, and note the ambiguity in missing_context, instead of answering for one project.
-Respond in Indonesian for Indonesian input, English for English input, and mirror mixed language naturally. Decide the language from the CURRENT CLIENT MESSAGE only, and use that one language for every text field: answer, draft_reply, missing_context, recommended_action, and summary. When the language is English but the sources are Indonesian, translate the supported content faithfully into English without adding, removing, or changing any fact, step, or policy. Quotes in citations stay verbatim in the source language. The Indonesian phrases quoted in the rules below are examples, not required wording.
+Respond in Indonesian for Indonesian input, English for English input, and mirror mixed language naturally. Use the RESPONSE LANGUAGE given in the final user turn (it already accounts for conversation history and explicit language switches), and use that one language for every text field: answer, draft_reply, missing_context, recommended_action, and summary. When the language is English but the sources are Indonesian, translate the supported content faithfully into English without adding, removing, or changing any fact, step, or policy. Quotes in citations stay verbatim in the source language. The Indonesian phrases quoted in the rules below are examples, not required wording.
 Notion sources are the only authority for company-specific claims. Use only supplied sources.
 Treat source metadata as internal evidence only. Never copy SOURCE labels, IDs, UUIDs, titles, URLs, scores, or metadata into answer or draft_reply. Put source IDs only in structured citations.
 Only put something in missing_context if the customer's message truly lacks it and the agent cannot proceed without it. Never list information already provided (order number, account, error message, etc.) or "nice to have" details. Routine manual verification steps that the agent always performs as part of the SOP (checking a database, confirming a balance) belong in recommended_action, not missing_context — missing_context is only for what the customer still needs to supply.
 Never invent policies, refunds, timelines, credentials, or troubleshooting steps.
-You have NO access to any database, API, account, order, or production system. Never say or imply that you or "our team" have checked, are checking, or will check an account/order, and never state account data (balance, status, history). Account/order numbers, error messages, and attachments supplied by the agent are unverified case information: acknowledge them as "dicatat sebagai info case", never as verified. In answer and recommended_action, phrase verification as a step the agent (CS) can take, using only steps present in the cited sources (e.g. "perlu diverifikasi melalui riwayat poin"). If the sources contain no checking steps, say so instead of inventing them. In draft_reply, describe checks as upcoming ("akan kami bantu cek") and never as completed ("sudah dicek", "sudah dikembalikan", "sudah diperbaiki") unless the agent explicitly reported that result.
+You have NO access to any database, API, account, order, or production system. Never say or imply that you or "our team" have checked, are checking, or will check an account/order, and never state account data (balance, status, history). Account/order numbers, error messages, and attachments supplied by the agent are unverified case information: acknowledge them as "dicatat sebagai info case", never as verified. In answer and recommended_action, phrase verification as a step the agent (CS) can take, using only steps present in the cited sources (e.g. "perlu diverifikasi melalui riwayat poin"). If the sources contain no checking steps, say so instead of inventing them. Distinguish knowledge-based action from data verification: "CS can check the point history" / "CS dapat mengecek riwayat poin" (what a human agent can do per the sources) is allowed; "I checked" / "I can see" / "your balance is" / "sudah saya cek" (claiming you inspected real data) is forbidden. When an identifier is supplied, say it was received, that you have no direct access to the customer's account data so you cannot verify it, and name what CS should check. In draft_reply, describe checks as upcoming ("akan kami bantu cek") and never as completed ("sudah dicek", "sudah dikembalikan", "sudah diperbaiki") unless the agent explicitly reported that result.
 Every supported company-specific claim needs a citation using the REFERENCE number it came from.
 Clarification Flow: before answering, check whether the issue plus the supplied history and sources are actually enough to give a grounded, specific reply. If not, do not guess — set missing_context to what is still needed, put ONE short, specific question in answer (e.g. ask for the exact error message or order number, not "can you give more details?"). Leave draft_reply empty unless the cited Customer Reply is itself a safe, customer-facing request for the missing identifier; in that exception, preserve that request as the draft. Set confidence to "low" when clarification is needed. Never ask again for something the customer or agent already stated earlier in the history. If the message is ambiguous, indirect ("itu", "yang tadi", "masih sama"), or sarcastic, first try to resolve it from the conversation history; only ask a clarifying question if it genuinely cannot be resolved that way. If the conversation is discussing more than one distinct issue, identify which one the current message is about; if that itself is unclear, ask which issue it refers to instead of mixing information between them. When the current message supplies an account/order number or email, answer that current turn with a concise acknowledgement and next verification step; do not repeat the previous issue summary as if the identifier was not received. Never infer whether an unlabeled number is an account or order when the active source requires that distinction; ask the user to label it.
 Produce an editable customer-facing draft, never send it, and never claim it was sent. Draft regeneration or feedback must revise the supplied CURRENT DRAFT using only the active source's Customer Reply. A greeting edit must preserve the draft body and add one greeting only. A supplied customer identifier satisfies the matching Required Context; do not repeat the request or expose the identifier in the draft. A customer-guidance follow-up should answer the active topic using Customer Safe Summary and Customer Action as internal guidance, while using only Customer Reply for customer-facing wording. Never copy Customer Action into draft_reply.
 Return JSON matching the requested schema.`;
 
-const UNTRANSLATED_NOTE_EN = "Note: this answer could not be translated to English, so it is shown in the original Indonesian knowledge text.";
-
 // Guidance (steps, case understanding, knowledge status) is derived from the
 // cited article only, for every path, so the model never writes it.
-export async function generateGroundedAnswer(issue: string, documents: KnowledgeDocument[], history: Array<{ role: "user" | "assistant"; content: string }> = [], contextSummary = "", currentDraft = ""): Promise<GroundedAnswer> {
-  return buildGuidance(await generateBaseAnswer(issue, documents, history, contextSummary, currentDraft), documents, issue, history);
+export async function generateGroundedAnswer(issue: string, documents: KnowledgeDocument[], history: Array<{ role: "user" | "assistant"; content: string }> = [], contextSummary = "", currentDraft = "", lang: ResponseLanguage = detectLanguage(issue)): Promise<GroundedAnswer> {
+  const guided = buildGuidance(await generateBaseAnswer(issue, documents, history, contextSummary, currentDraft, lang), documents, issue, history, Date.now(), lang);
+  return lang === "en" ? translateGuidance(guided) : guided;
 }
 
-async function generateBaseAnswer(issue: string, documents: KnowledgeDocument[], history: Array<{ role: "user" | "assistant"; content: string }> = [], contextSummary = "", currentDraft = ""): Promise<GroundedAnswer> {
-  if (isGreetingOnly(issue)) return greetingAnswer(issue, history);
-  const lang = detectLanguage(issue);
+function deterministicGuidanceEnglish(value: string) {
+  const replacements: Array<[string, string]> = [
+    ["Minta nomor akun/nomor pesanan customer.", "Ask for the customer's account number or order number."],
+    ["Sampaikan bahwa saldo akan dicek dan disesuaikan bila terbukti ada selisih.", "Explain that the balance will be checked and adjusted if a discrepancy is confirmed."],
+    ["Jangan menjanjikan jumlah poin sebelum verifikasi selesai", "Do not promise a point amount before verification is complete"],
+    ["Konfirmasi nomor akun atau nomor pesanan terkait.", "Confirm the related account number or order number."],
+    ["Bandingkan saldo poin dengan riwayat poin dan transaksi terkait.", "Compare the point balance with the point history and related transactions."],
+    ["Catat bila ada adjustment manual atau perbedaan riwayat", "Record any unrecognized manual adjustment or history discrepancy"],
+    ["Saldo tetap 0 setelah riwayat poin dan transaksi dibandingkan.", "The balance remains 0 after comparing the point history and related transactions."],
+    ["Ada adjustment manual yang tidak dikenal atau tidak dapat dijelaskan", "An unrecognized or unexplained manual adjustment is found"],
+    ["Ada adjustment manual tidak dikenal", "An unrecognized manual adjustment is found"],
+    ["Minta nomor akun atau nomor pesanan customer", "Ask for the customer's account number or order number"],
+    ["Minta nomor akun customer", "Ask for the customer's account number"],
+    ["Minta customer mengirimkan nomor akun", "Ask the customer to provide the account number"],
+    ["Periksa riwayat poin", "Check the point history"],
+    ["Periksa saldo poin", "Check the point balance"],
+    ["Periksa transaksi terkait", "Check the related transactions"],
+    ["Cek transaksi terkait", "Check the related transactions"],
+    ["Cek riwayat poin", "Check the point history"],
+    ["Cek saldo poin", "Check the point balance"],
+    ["Bandingkan dengan riwayat pesanan", "Compare it with the order history"],
+    ["Jika ditemukan selisih", "If a discrepancy is found"],
+    ["Jika tidak ada selisih", "If there is no discrepancy"],
+    ["Eskalasi ke tim terkait", "Escalate to the relevant team"],
+    ["Eskalasi ke tim", "Escalate to the team"],
+    ["Lakukan penyesuaian", "Make the adjustment"],
+    ["Jangan menjanjikan", "Do not promise"],
+    ["sebelum diverifikasi", "before it is verified"],
+    ["setelah diverifikasi", "after it is verified"],
+    ["saldo poin", "point balance"],
+    ["riwayat poin", "point history"],
+    ["nomor akun", "account number"],
+    ["nomor pesanan", "order number"],
+  ];
+  return replacements.reduce((text, [source, target]) => text.replaceAll(source, target), value);
+}
+
+// Internal CS guidance is copied from (Indonesian) Notion fields. For English
+// askers, translate it faithfully; retry any item the first response leaves untranslated.
+async function translateGuidance(answer: GroundedAnswer): Promise<GroundedAnswer> {
+  const originalItems = [
+    ...(answer.next_actions ?? []),
+    ...(answer.escalate_when ?? []),
+    ...(answer.recommended_action ? [answer.recommended_action] : []),
+    ...answer.missing_context,
+  ];
+  const items = originalItems.map(deterministicGuidanceEnglish);
+  const apply = (out: string[]) => {
+    let i = 0;
+    const take = (count: number) => out.slice(i, i += count);
+    const next_actions = answer.next_actions ? take(answer.next_actions.length) : undefined;
+    const escalate_when = answer.escalate_when ? take(answer.escalate_when.length) : undefined;
+    const recommended_action = answer.recommended_action ? take(1)[0] : answer.recommended_action;
+    const missing_context = take(answer.missing_context.length);
+    return { ...answer, ...(next_actions ? { next_actions } : {}), ...(escalate_when ? { escalate_when } : {}), recommended_action, missing_context };
+  };
+  if (!items.some((item) => detectLanguage(item) === "id")) return apply(items);
+  if (!configuredApiKey() || process.env.CSCOPILOT_NO_AI === "1") return apply(items);
+
+  const translate = async (values: string[]) => {
+    const response = await withRetry(() => client().messages.create({
+      model: process.env.ANTHROPIC_MODEL?.trim() || process.env.CLAUDE_MODEL?.trim() || DEFAULT_MODEL,
+      max_tokens: 1500,
+      system: "Translate every string in the JSON array into English. Preserve meaning exactly; do not add, remove, or change any fact, step, or policy. Do not claim anything was checked or verified. Return only a JSON array with the same length and order.",
+      messages: [{ role: "user", content: JSON.stringify(values) }],
+    } as never));
+    const text = response.content.find((block) => block.type === "text")?.text ?? "";
+    const parsed: unknown = JSON.parse(text.slice(text.indexOf("["), text.lastIndexOf("]") + 1));
+    return Array.isArray(parsed) && parsed.length === values.length && parsed.every((item) => typeof item === "string") ? parsed as string[] : values;
+  };
+
+  try {
+    const out = await translate(items);
+    for (let pass = 0; pass < 2; pass += 1) {
+      const remainingIndexes = out.map((item, index) => detectLanguage(item) === "id" ? index : -1).filter((index) => index >= 0);
+      if (!remainingIndexes.length) break;
+      const retried = await translate(remainingIndexes.map((index) => items[index]));
+      remainingIndexes.forEach((index, retryIndex) => { out[index] = retried[retryIndex]; });
+    }
+    return apply(out);
+  } catch (error) {
+    console.error("Guidance translation failed", error);
+    return apply(items);
+  }
+}
+
+async function generateBaseAnswer(issue: string, documents: KnowledgeDocument[], history: Array<{ role: "user" | "assistant"; content: string }> = [], contextSummary = "", currentDraft = "", lang: ResponseLanguage = detectLanguage(issue)): Promise<GroundedAnswer> {
+  if (isGreetingOnly(issue)) return greetingAnswer(issue, history, lang);
   if (isClosingMessage(issue)) return fallback(issue, documents, history, currentDraft, lang);
   const scope = resolveProjectScope(issue, history);
   if (scope.ambiguous) return fallback(issue, documents, history, currentDraft, lang);
   const scopedDocuments = scope.project ? filterDocumentsByProject(documents, scope.project) : documents;
   const modelHistory = scope.project ? historyForProject(history, scope.project) : history;
-  const deterministicPointAnswer = pointAnswer(issue, scopedDocuments, modelHistory, currentDraft);
+  const deterministicPointAnswer = pointAnswer(issue, scopedDocuments, modelHistory, currentDraft, lang);
   const canTranslatePointAnswer = lang === "en" && Boolean(deterministicPointAnswer?.citations.length) && Boolean(configuredApiKey()) && process.env.CSCOPILOT_NO_AI !== "1";
   // The deterministic point answer comes straight from the (Indonesian) article. When an English asker gets it untranslated,
   // tell CS in `answer` only; draft_reply is customer-facing and must stay clean.
   const untranslatedPointAnswer = () => {
     const safe = sanitizeAnswer(deterministicPointAnswer!, lang);
-    return lang === "en" && detectLanguage(safe.answer) === "id" ? { ...safe, answer: `${UNTRANSLATED_NOTE_EN}\n\n${safe.answer}` } : safe;
+    if (lang !== "en" || detectLanguage(safe.answer) !== "id") return safe;
+    const identifierReceived = safe.intent === "Identifier received";
+    const identifier = /\bakun\b/i.test(safe.answer) ? "account number" : /\bpesanan\b/i.test(safe.answer) ? "order number" : "provided identifier";
+    const answer = identifierReceived
+      ? `The ${identifier} has been received. I don't have direct access to the customer's account data, so I cannot verify the current point balance from here. Please check the point balance, point history, and related transactions.`
+      : "The knowledge base notes that some accounts may display a point balance of 0 because of a technical issue. I don't have direct access to account data, so I cannot verify the current point balance from here. Please check the point balance, point history, and related transactions.";
+    const draft_reply = identifierReceived
+      ? `Thank you, we have received the ${identifier}. We will follow up on the point balance once the case has been reviewed.`
+      : "Hi, we're sorry for the inconvenience. Some accounts may temporarily display a 0-point balance due to a technical issue. Could you please provide the customer's account number so we can verify the balance?";
+    return { ...safe, answer, draft_reply };
   };
   const safePointFallback = () => deterministicPointAnswer ? untranslatedPointAnswer() : undefined;
   if (deterministicPointAnswer && !canTranslatePointAnswer) return untranslatedPointAnswer();
@@ -456,7 +552,9 @@ messages: [
   ...modelHistory,
   {
     role: "user",
-    content: `CURRENT CLIENT MESSAGE (answer this; the messages above are context only):
+    content: `RESPONSE LANGUAGE: ${lang === "en" ? "English" : "Indonesian"} (the language of this conversation; use it for every text field, even if the current message is only a number or "ok").
+
+CURRENT CLIENT MESSAGE (answer this; the messages above are context only):
 ${issue}
 
 ACTIVE CONTEXT (unverified unless explicitly marked verified):
@@ -507,7 +605,7 @@ Do not invent facts not supported by the knowledge context or conversation.`
   }
   const citations = mapCitations(parsed.citations, scopedDocuments);
   const grounded = citations.length === parsed.citations.length && citations.length > 0;
-  return (grounded ? undefined : safePointFallback()) ?? enforceMissingContextInvariant({
+  return (grounded ? undefined : safePointFallback()) ?? sanitizeAnswer(enforceMissingContextInvariant({
     ...parsed,
     citations,
     ...(grounded ? {} : {
@@ -516,7 +614,7 @@ Do not invent facts not supported by the knowledge context or conversation.`
       confidence: "low" as const,
       missing_context: ["Sumber knowledge yang valid belum tersedia untuk jawaban ini."],
     }),
-  });
+  }), lang);
 }
 
 export { fallback as generateNoAiAnswer };

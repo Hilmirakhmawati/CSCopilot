@@ -42,7 +42,8 @@ function significantWords(value: string) {
 
 function satisfied(context: string, kinds: Set<Kind>) {
   if (context === "nomor pesanan terkait") return kinds.has("order") || kinds.has("unknown");
-  if (context === "nomor atau email akun terkait") return kinds.has("account") || kinds.has("email");
+  if (context === "nomor atau email akun terkait") return kinds.has("account") || kinds.has("email") || kinds.has("unknown");
+  if (context === "nomor akun terkait") return kinds.has("account") || kinds.has("order") || kinds.has("unknown");
   return kinds.has("account") || kinds.has("order") || kinds.has("email");
 }
 
@@ -59,8 +60,7 @@ function suppliedKinds(query: string, history: Turn[]) {
   return kinds;
 }
 
-export function buildGuidance(answer: GroundedAnswer, documents: KnowledgeDocument[], query: string, history: Turn[] = [], now = Date.now()): GroundedAnswer {
-  const lang: ResponseLanguage = detectLanguage(query);
+export function buildGuidance(answer: GroundedAnswer, documents: KnowledgeDocument[], query: string, history: Turn[] = [], now = Date.now(), lang: ResponseLanguage = detectLanguage(query)): GroundedAnswer {
   const english = lang === "en";
   const document = documents.find((item) => item.id === answer.citations?.[0]?.document_id);
   if (!document) {
@@ -76,7 +76,7 @@ export function buildGuidance(answer: GroundedAnswer, documents: KnowledgeDocume
   const verifiedAt = Date.parse(lastVerified);
 
   const kinds = suppliedKinds(query, history);
-  const context = requiredContext(sourceLine(document.content, "Customer Action"), sourceLine(document.content, "Required Context"));
+  const context = requiredContext(sourceLine(document.content, "Customer Action"), sourceLine(document.content, "Required Context"), document.title);
   const missing = context && !satisfied(context, kinds) ? [context] : [];
   const reportedResult = csResultPattern.test(query);
   const queryWords = significantWords(query);

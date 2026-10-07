@@ -14,6 +14,10 @@ export type GroundedAnswer = {
   draft_reply: string;
   citations: Citation[];
   confidence: "low" | "medium" | "high";
+  response_language?: "id" | "en";
+  verification_status?: "verified" | "not_verified";
+  // Internal warning shown separately from the safe answer.
+  safety_warning?: string;
   // True when draft_reply is empty because the Notion article itself is
   // unfinished (missing Customer Reply / Customer Safe Summary / Customer
   // Action) — a knowledge-authoring gap, not something the customer needs

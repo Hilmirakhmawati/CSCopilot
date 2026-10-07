@@ -95,31 +95,32 @@ test.afterEach(async ({}, testInfo) => {
   artifacts.clear();
 });
 
-test("TC-01: direct question stays in one project", async ({ page }) => {
+test("TC-01: direct point question is grounded", async ({ page }) => {
   await freshConversation(page);
-  const response = await send(page, 'Project A: aplikasi tidak bisa login sejak kemarin, muncul error "invalid token".');
-  record("TC-01", 'Project A: aplikasi tidak bisa login sejak kemarin, muncul error "invalid token".', response);
+  const input = "Kenapa saldo poin customer tampil 0?";
+  const response = await send(page, input);
+  record("TC-01", input, response);
   assertGrounded(response);
-  expect(customerText(response)).toMatch(/login|invalid token|Project A/i);
-  expect(customerText(response)).not.toMatch(/Project B|payment|checkout/i);
+  expect(customerText(response)).toMatch(/poin|point|saldo|akun/i);
+  expect(customerText(response)).not.toMatch(/Project B/i);
   assertNoSourceMetadata(response);
 });
 
-test("TC-02: follow-up keeps the Project A login context", async ({ page }) => {
+test("TC-02: follow-up keeps the point history context", async ({ page }) => {
   await freshConversation(page);
-  const first = 'Kami ada masalah login di Project A.';
-  const second = "Berapa lama biasanya ini bisa selesai?";
+  const first = "Kenapa riwayat poin beda dengan riwayat pesanan?";
+  const second = "Apa langkah yang bisa dicek CS?";
   const firstResponse = await send(page, first);
   record("TC-02", first, firstResponse);
   assertGrounded(firstResponse);
   const response = await send(page, second);
   record("TC-02", second, response);
-  expect(customerText(response)).toMatch(/login|Project A|timeline|resolution|estimasi|waktu|knowledge/i);
-  expect(customerText(response)).not.toMatch(/Project B|payment|checkout/i);
+  expect(customerText(response)).toMatch(/poin|point|riwayat|pesanan|langkah|knowledge/i);
+  expect(customerText(response)).not.toMatch(/Project B/i);
   assertNoSourceMetadata(response);
 });
 
-// Deferred: only Project A knowledge is rolled out for now. Re-enable once Project B articles exist in UAT.
+// Deferred: needs Project B knowledge. Re-enable once Project B articles exist in UAT.
 test.fixme("TC-03: Project B topic excludes Project A payment context", async ({ page }) => {
   await freshConversation(page);
   const first = "Project A: pembayaran customer gagal terus di checkout.";
@@ -133,19 +134,19 @@ test.fixme("TC-03: Project B topic excludes Project A payment context", async ({
   assertNoSourceMetadata(response);
 });
 
-test("TC-05: earlier Project A context carries into the final follow-up", async ({ page }) => {
+test("TC-05: earlier point context carries into the final follow-up", async ({ page }) => {
   await freshConversation(page);
   const turns = [
-    "Kami sedang investigasi masalah di Project A terkait sinkronisasi data.",
-    "Datanya sudah dicek, error muncul di modul export.",
+    "Perhitungan penggunaan poin customer sepertinya salah.",
+    "Poinnya terpotong lebih besar dari total pesanan.",
     "Apakah ada solusi untuk issue ini?",
   ];
   for (const input of turns.slice(0, 2)) record("TC-05", input, await send(page, input));
   const response = await send(page, turns[2]);
   record("TC-05", turns[2], response);
   assertGrounded(response);
-  expect(customerText(response)).toMatch(/Project A|export|sinkronisasi|solusi|issue/i);
-  expect(customerText(response)).not.toMatch(/Project B|payment|checkout/i);
+  expect(customerText(response)).toMatch(/poin|point|perhitungan|solusi|issue/i);
+  expect(customerText(response)).not.toMatch(/Project B/i);
   assertNoSourceMetadata(response);
 });
 
@@ -161,7 +162,7 @@ test("TC-07: unknown topic does not invent a grounded reply", async ({ page }) =
   assertNoSourceMetadata(response);
 });
 
-// Deferred: needs Project B knowledge (see TC-03).
+// Deferred: needs Project B knowledge.
 test.fixme("TC-09: long conversation answers the latest Project B owner question", async ({ page }) => {
   await freshConversation(page);
   const turns = [

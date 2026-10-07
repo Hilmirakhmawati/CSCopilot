@@ -4,7 +4,7 @@ import { getSupabaseAdmin } from "./db";
 import { greetingAnswer, isGreetingOnly, retrieveKnowledge, continuationSignal } from "./retrieval";
 import { activeContextForPrompt, estimateTokens, supersedeTopic, trimHistoryToBudget, updateActiveContext, type ActiveContext } from "./context";
 import { sanitizeAnswer } from "./answer-safety";
-import { detectLanguage } from "./language";
+import { detectConversationLanguage } from "./language";
 import { validateCitations } from "./assistant-check";
 
 type Database = ReturnType<typeof getSupabaseAdmin>;
@@ -49,8 +49,16 @@ let idempotencySupported: boolean | null = null;
 export async function idempotencyReady(db: Database): Promise<boolean> {
   if (idempotencySupported === null) {
     const probe = await db.from("messages").select("idempotency_key").limit(1);
-    idempotencySupported = !probe.error;
-    if (probe.error) console.warn("Idempotency columns unavailable; apply 002_message_idempotency.sql to enable replay protection");
+    if (!probe.error) idempotencySupported = true;
+    else if (["PGRST204", "42703"].includes(probe.error.code ?? "")) {
+      // A missing column is stable until the migration is applied; cache only
+      // this known capability result. Transient DB errors must be retried.
+      idempotencySupported = false;
+      console.warn("Idempotency columns unavailable; apply 002_message_idempotency.sql to enable replay protection");
+    } else {
+      console.warn("Could not probe idempotency columns; retrying the probe later", probe.error);
+      return false;
+    }
   }
   return idempotencySupported;
 }
@@ -196,25 +204,32 @@ async function processConversationMessageUnlocked(
         if (existing.data) return replayResult(existing.data as StoredMessage);
         await new Promise((resolve) => setTimeout(resolve, 500));
       }
+      const stale = await db.from("messages").select("id,created_at").eq("conversation_id", conversationId).eq("idempotency_key", key).eq("role", "user").maybeSingle();
+      if (stale.error) throw stale.error;
+      if (stale.data && Date.now() - new Date(stale.data.created_at).getTime() > 60_000) {
+        const removed = await db.from("messages").delete().eq("id", stale.data.id).eq("role", "user");
+        if (removed.error) throw removed.error;
+      }
       throw new Error("Request already in progress, please retry");
     }
     throw input.error;
   }
 
+  let commitStarted = false;
   try {
     const greeting = isGreetingOnly(issue);
-    const language = detectLanguage(issue);
+    const language = detectConversationLanguage(issue, boundedHistory);
     const documents = greeting ? [] : await retrieveKnowledge(issue, boundedHistory);
     if (!greeting && documents.length === 0) {
       // Reused audit_events rather than a new table — same shape (actor,
       // metadata) fits, and it already has an admin view to build on.
-      const zeroResult = await db.from("audit_events").insert({ actor_id: userId, entity_type: "knowledge_query", entity_id: null, action: "zero_result", metadata: { query: issue, conversation_id: conversationId } });
+      const zeroResult = await db.from("audit_events").insert({ actor_id: userId, entity_type: "knowledge_query", entity_id: null, action: "zero_result", metadata: { query: issue.slice(0, 200), conversation_id: conversationId } });
       if (zeroResult.error) console.error("Failed to log zero-result query", zeroResult.error);
     }
     const generated = greeting
-      ? greetingAnswer(issue, boundedHistory)
-      : await generateGroundedAnswer(issue, documents, boundedHistory, contextText, currentDraft);
-    const answer = sanitizeAnswer(generated, language);
+      ? greetingAnswer(issue, boundedHistory, language)
+      : await generateGroundedAnswer(issue, documents, boundedHistory, contextText, currentDraft, language);
+    const answer = { ...sanitizeAnswer(generated, language), response_language: language, verification_status: "not_verified" as const };
     answer.citations = validateCitations(
       answer.citations ?? [],
       new Set(documents.map((document) => document.id)),
@@ -242,6 +257,7 @@ async function processConversationMessageUnlocked(
     if (contextColumnsAvailable) {
       // The RPC commits assistant insertion + context update in one DB
       // transaction. The model call stays outside the transaction.
+      commitStarted = true;
       const committed = await db.rpc("commit_message_turn", {
         p_conversation_id: conversationId,
         p_user_id: userId,
@@ -278,6 +294,7 @@ async function processConversationMessageUnlocked(
         assistantCreatedAt = committed.data[0].assistant_created_at;
       }
     } else {
+      commitStarted = true;
       const output = await db
         .from("messages")
         .insert({ conversation_id: conversationId, role: "assistant", content: answer.answer, citations: answer.citations, ...(key ? { idempotency_key: key, reply_to_id: input.data.id } : {}) })
@@ -297,8 +314,10 @@ async function processConversationMessageUnlocked(
       sources: documents,
     };
   } catch (error) {
-    const cleanup = await db.from("messages").delete().eq("id", input.data.id).eq("role", "user");
-    if (cleanup.error) console.error("Failed to clean up failed user message", cleanup.error);
+    if (!commitStarted) {
+      const cleanup = await db.from("messages").delete().eq("id", input.data.id).eq("role", "user");
+      if (cleanup.error) console.error("Failed to clean up failed user message", cleanup.error);
+    }
     throw error;
   }
 }

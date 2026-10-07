@@ -42,8 +42,18 @@ export async function POST(request: Request) {
       throw error;
     }
     if (content !== undefined) {
-      const result = await processConversationMessage(db, data.id, user.id, content, idempotencyKey, currentDraft);
-      return Response.json({ conversation: data, ...result }, { status: 201 });
+      try {
+        const result = await processConversationMessage(db, data.id, user.id, content, idempotencyKey, currentDraft);
+        return Response.json({ conversation: data, ...result }, { status: 201 });
+      } catch (processingError) {
+        // The client never receives this id on failure, so an empty chat would
+        // be orphaned in history. Keep it when an idempotency key lets a retry reuse it.
+        if (!idempotencyKey) {
+          const cleanup = await db.from("conversations").delete().eq("id", data.id).eq("created_by", user.id);
+          if (cleanup.error) console.error("Failed to clean up empty conversation", cleanup.error);
+        }
+        throw processingError;
+      }
     }
     return Response.json(data, { status: 201 });
   } catch (error) { return errorResponse(error); }

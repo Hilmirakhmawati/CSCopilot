@@ -1,13 +1,14 @@
 import type { GroundedAnswer, KnowledgeDocument } from "./assistant-types";
 import { getSupabaseAdmin } from "./db";
 import { filterDocumentsByProject, historyForProject, isStandaloneProjectAlias, resolveProjectScope } from "./project-scope";
-import { contextLabel, detectLanguage } from "./language";
+import { contextLabel, detectLanguage, type ResponseLanguage } from "./language";
 
 // Short questions or ones that reference something already said ("itu", "nya")
 // carry no keywords of their own — only those get to borrow prior context.
 // A short topic switch ("Pembayaran saya gagal") still has topic words and
 // must not inherit history, or it will keep matching the previous topic.
 const followUpWords = new Set(["itu", "nya", "tersebut", "ini", "sebelumnya", "barusan", "masih", "sama", "lagi", "belum", "sudah", "udah", "tetap", "begitu", "gimana", "kenapa", "kok", "ya", "dong", "sih", "aja", "saja"]);
+const englishFollowUpPattern = /\b(?:how\s+(?:can|do|should)\s+i|what\s+should\s+i\s+do|can\s+i)\b.{0,50}\b(?:check|verify|see|find|fix|proceed|it|this|that)\b|\bwhat(?:'s|\s+is)?\s+next\b|\bwhat\s+(?:should|do|can|shall)\s+i\s+do\b.{0,20}\b(?:next|now|then)\b|\b(?:next|following)\s+steps?\b/i;
 
 // A bare identifier (order number, account number, email) carries no topic
 // keyword of its own — a customer replying "123344555" to "which order?" is
@@ -19,7 +20,10 @@ function looksLikeBareIdentifier(word: string) {
 // Words that only ever label an identifier being supplied ("Nomor pesanannya
 // 1234567890"), never a complaint on their own. Combined with an identifier
 // elsewhere in the message, they still carry no new topic of their own.
-const identifierLabelWords = new Set(["nomor", "no", "id", "pesanan", "pesanannya", "order", "akun", "akunnya", "email"]);
+const identifierLabelWords = new Set(["nomor", "nomer", "no", "id", "pesanan", "pesanannya", "order", "akun", "akunnya", "email", "account", "number", "customer", "member", "user", "pelanggan"]);
+
+// "customer number", "member id", "nomor pelanggan" ... all name the customer's account.
+const CUSTOMER_LABEL = String.raw`(?:(?:customer|member|user|pelanggan)\s+(?:number|id|no)|nom[eo]r\s+(?:customer|pelanggan|member))`;
 
 export function continuationSignal(query: string, history: Array<{ role: "user" | "assistant"; content: string }> = []) {
   if (
@@ -36,7 +40,8 @@ export function continuationSignal(query: string, history: Array<{ role: "user" 
   ) return true;
   const normalized = query.toLowerCase();
   const words = normalized.match(/[a-z0-9À-ɏ@.+-]+/g) ?? [];
-  if (/\b(itu|nya|tersebut|ini|sebelumnya|barusan)\b/.test(normalized)) return true;
+  if (englishFollowUpPattern.test(normalized)) return true;
+  if (/\b(itu|nya|tersebut|ini|sebelumnya|barusan|selanjutnya|berikutnya)\b/.test(normalized)) return true;
   if (words.length > 0 && words.every((word) => looksLikeBareIdentifier(word) || identifierLabelWords.has(word)) && words.some((word) => looksLikeBareIdentifier(word))) return true;
   return words.length > 0 && words.length <= 3 && words.every((word) => followUpWords.has(word));
 }
@@ -60,7 +65,7 @@ const feedbackMarkers = /(?:ya\s+terus\s+gimana\s+dong|masa\s+cuma\s+itu|masih\s
 const draftRegenerationMarkers = /\b(?:buat(?:kan)?|generate|regenerasi|alternatif|lainnya|baru)\b[\s\w-]{0,40}\b(?:draft|balasan)\b|\b(?:draft|balasan)\b[\s\w-]{0,40}\b(?:lainnya|alternatif|baru)\b/i;
 const draftFeedbackMarkers = /\b(?:draft|balasan)\b[\s\w-]{0,30}\b(?:belum\s+sesuai|kurang|tidak\s+sesuai)\b/i;
 const greetingEditMarkers = /\b(?:kurang|tambah(?:kan)?)\b[\s\w-]{0,20}\b(?:isi\s+)?sapaan\b|\b(?:sapaan|salam)\b.*\b(?:kurang|tambah(?:kan)?)\b/i;
-const suppliedContextMarkers = /\b(?:ini|berikut)\s+(?:akun(?:n?ya)?|account|nom[eo]r\s+(?:pesanan|order|akun)|email)\b|\b(?:akun(?:n?ya)?|account|id\s+akun|nom[eo]r\s+(?:pesanan|order|akun)|email)\s*[:#-]?\s*(?:\d{6,}|[\w.+-]+@[\w.-]+\.[a-z]{2,})/i;
+const suppliedContextMarkers = /\b(?:customer|member|user|pelanggan)\s+(?:number|id|no)\b[^.!?\n]{0,40}\b\d{6,}\b|\b\d{6,}\b[^.!?\n]{0,40}\b(?:(?:customer|member|user|pelanggan)\s+(?:number|id|no)|nom[eo]r\s+(?:customer|pelanggan|member))\b|\bnom[eo]r\s+(?:customer|pelanggan|member)\b[^.!?\n]{0,40}\b\d{6,}\b|\b(?:ini|berikut)\s+(?:akun(?:n?ya)?|account|nom[eo]r\s+(?:pesanan|order|akun)|email)\b|\b(?:akun(?:n?ya)?|account|id\s+akun|nom[eo]r\s+(?:pesanan|order|akun)|email)\s*[:#-]?\s*(?:\d{6,}|[\w.+-]+@[\w.-]+\.[a-z]{2,})|\b(?:this|that)\s+(?:account|order)(?:\s+(?:data|number|info))?\b|\b\d{6,}\b[^.!?\n]{0,40}\b(?:this|that)\s+(?:account|order)(?:\s+(?:data|number|info))?\b|\b\d{6,}\b[^.!?\n]{0,40}\b(?:account|order)(?:\s+(?:data|number|info))?\b/i;
 const accountIdentifierPattern = /\b(?:akun(?:n?ya)?|account|id\s+akun|nom[eo]r\s+akun)\b[^.!?\n]{0,100}?\b\d{6,}\b/i;
 const accountLabelOnlyPattern = /\b(?:akun(?:n?ya)?|account|id\s+akun|nom[eo]r\s+akun(?:n?ya)?)\b/i;
 const orderLabelOnlyPattern = /\b(?:pesanan(?:nya)?|order|nom[eo]r\s+(?:pesanan|order)|id\s+(?:pesanan|order))\b/i;
@@ -217,9 +222,8 @@ export function isGreetingOnly(query: string) {
   return tokens.slice(leadLength).length <= 3;
 }
 
-export function greetingAnswer(query: string, history: Array<{ role: "user" | "assistant"; content: string }> = []): GroundedAnswer {
+export function greetingAnswer(query: string, history: Array<{ role: "user" | "assistant"; content: string }> = [], lang: ResponseLanguage = detectLanguage(query)): GroundedAnswer {
   const normalized = query.toLowerCase();
-  const lang = detectLanguage(query);
   const english = lang === "en";
   const current = english ? "Hi! 👋" : /\b(pagi|selamat pagi)\b/.test(normalized) ? "Selamat pagi! 👋" : /\b(siang|selamat siang)\b/.test(normalized) ? "Selamat siang! 👋" : /\b(sore|petang|selamat sore|selamat petang)\b/.test(normalized) ? "Selamat sore! 👋" : /\b(malam|selamat malam)\b/.test(normalized) ? "Selamat malam! 👋" : "Halo! 👋";
   const hasTopic = history.some((message) => message.role === "user");
@@ -258,11 +262,11 @@ export function pointArticleTitle(query: string) {
   if (/\b(saldo|poin|point)\b.*\b(0|nol|hilang|kosong)\b|\b(0|nol|hilang|kosong)\b.*\b(saldo|poin|point)\b/.test(normalized)) return POINT_ARTICLE_TITLE_MATCHES[0];
   // English phrasing ("points balance 0", "my points are zero"); additive, Indonesian patterns above unchanged.
   if (/\b(points?|balance)\b.*\b(0|zero|missing|empty)\b|\b(0|zero|missing|empty)\b.*\b(points?|balance)\b/.test(normalized)) return POINT_ARTICLE_TITLE_MATCHES[0];
-  if (/\b(riwayat|history|histori)\b/.test(normalized) && /\b(pesanan|order|transaksi)\b/.test(normalized) && /\b(tidak|beda|berbeda|cocok|sesuai|match)\b/.test(normalized) && !/\bpesanan umum\b|\bgeneral order\b/.test(normalized)) return POINT_ARTICLE_TITLE_MATCHES[1];
+  if (/\b(riwayat|history|histori)\b/.test(normalized) && /\b(pesanan|order|transaksi(?:s)?|transaction(?:s)?)\b/.test(normalized) && /\b(tidak|beda|berbeda|cocok|sesuai|match|differ\w*|mismatch|inconsistent|wrong)\b/.test(normalized) && !/\bpesanan umum\b|\bgeneral order\b/.test(normalized)) return POINT_ARTICLE_TITLE_MATCHES[1];
   if (/\b(riwayat|history|histori)\b.*\b(pesanan umum|general order)\b|\b(pesanan umum|general order)\b.*\b(riwayat|history|histori|konsisten|selisih)/.test(normalized)) return POINT_ARTICLE_TITLE_MATCHES[3];
-  if (/\b(riwayat|history|histori)\b.*\b(tidak|beda|berbeda|cocok|sesuai|match|selisih)\b|\b(tidak|beda|berbeda|cocok|sesuai|match|selisih)\b.*\b(riwayat|history|histori)\b/.test(normalized)) return POINT_ARTICLE_TITLE_MATCHES[1];
-  if (/\b(perhitungan|kalkulasi|jumlah)\b.*\b(poin|point)\b|\b(poin|point)\b.*\b(terpakai|digunakan|usage|perhitungan|kalkulasi)\b/.test(normalized)) return POINT_ARTICLE_TITLE_MATCHES[2];
-  if (/\b(audit|periksa ulang|cek ulang|selisih|penyesuaian|sesuaikan)\b.*\b(saldo|poin|point)\b|\b(saldo|poin|point)\b.*\b(audit|periksa ulang|cek ulang|selisih|penyesuaian|sesuaikan)\b/.test(normalized)) return POINT_ARTICLE_TITLE_MATCHES[4];
+  if (/\b(riwayat|history|histori)\b.*\b(tidak|beda|berbeda|cocok|sesuai|match|selisih|differ\w*|difference|mismatch|inconsistent|wrong)\b|\b(tidak|beda|berbeda|cocok|sesuai|match|selisih|differ\w*|difference|mismatch|inconsistent|wrong)\b.*\b(riwayat|history|histori)\b/.test(normalized)) return POINT_ARTICLE_TITLE_MATCHES[1];
+  if (/\b(perhitungan|kalkulasi|calculat\w*|computed|jumlah)\b.*\b(poin|points?)\b|\b(poin|points?)\b.*\b(terpakai|digunakan|usage|used|deducted|perhitungan|kalkulasi|calculat\w*)\b/.test(normalized)) return POINT_ARTICLE_TITLE_MATCHES[2];
+  if (/\b(audit|periksa ulang|cek ulang|selisih|penyesuaian|sesuaikan|reconcile|adjust\w*|discrepanc\w*)\b.*\b(saldo|balance|poin|points?)\b|\b(saldo|balance|poin|points?)\b.*\b(audit|periksa ulang|cek ulang|selisih|penyesuaian|sesuaikan|reconcile|adjust\w*|discrepanc\w*)\b/.test(normalized)) return POINT_ARTICLE_TITLE_MATCHES[4];
   return null;
 }
 
@@ -297,10 +301,12 @@ export function sourceLine(content: string, label: string) {
 // draft creation forever, since it could never be marked satisfied honestly.
 // ponytail: add attachment upload + Vision review, then reinstate a
 // screenshot requirement category here.
-export function requiredContext(action: string, explicit: string) {
+export function requiredContext(action: string, explicit: string, title = "") {
   const value = `${explicit} ${action}`.toLowerCase();
   const hasOrder = /\b(nomor pesanan|nomor order|order id|id pesanan)\b/.test(value);
   const hasAccount = /\b(nomor akun|id akun|email akun|akun customer|akun pelanggan)\b/.test(value);
+  // A 0-point balance is an account-level problem: ask for the account number first, accept an order number as an alternative.
+  if (hasOrder && hasAccount && title && titleMatches(title, POINT_ARTICLE_TITLE_MATCHES[0])) return "nomor akun terkait";
   if (hasOrder && hasAccount) return "nomor akun atau nomor pesanan terkait";
   if (hasOrder) return "nomor pesanan terkait";
   if (hasAccount) return "nomor atau email akun terkait";
@@ -322,6 +328,14 @@ export function suppliedIdentifier(query: string): SuppliedIdentifier | null {
   const labeledOrder = query.match(/\b(?:nomor|no\.?|id)?\s*(?:pesanan|order)\b[^.!?\n]{0,100}?\b(\d{6,})\b/i)?.[1];
   if (labeledOrder) return { kind: "order", value: labeledOrder };
 
+  // "customer number 12344125255" / "12344125255 CUSTOMER NUMBER": the customer number is the account number.
+  const customerLabeled = query.match(new RegExp(`\\b${CUSTOMER_LABEL}\\b[^.!?\\n]{0,40}?\\b(\\d{6,})\\b|\\b(\\d{6,})\\b[^.!?\\n]{0,40}?\\b${CUSTOMER_LABEL}\\b`, "i"));
+  const customerNumber = customerLabeled?.[1] ?? customerLabeled?.[2];
+  if (customerNumber) return { kind: "account", value: customerNumber };
+
+  const accountAfter = query.match(/\b(\d{6,})\b[^.!?\n]{0,40}\b(?:(?:ini|this|that|itu)\s+)?(?:(?:nomor|no\.?|number)\s+)?(?:akun|account)(?:nya)?(?:\s+\w+)?\b/i)?.[1];
+  if (accountAfter) return { kind: "account", value: accountAfter };
+
   // Number first, label after: "1617399381803 ini no pesanannya".
   const orderAfter = query.match(/\b(\d{6,})\b[^.!?\n]{0,40}?\b(?:nom[eo]r\s+|no\.?\s+|id\s+)?(?:pesanan|order)(?:nya)?\b/i)?.[1];
   if (orderAfter) return { kind: "order", value: orderAfter };
@@ -336,6 +350,7 @@ export function contextSatisfied(context: string | null, query: string) {
   if (!identifier) return false;
   if (context === "nomor pesanan terkait") return identifier.kind === "order" || identifier.kind === "unknown";
   if (context === "nomor atau email akun terkait") return identifier.kind === "account" || identifier.kind === "email";
+  if (context === "nomor akun terkait") return identifier.kind === "account" || identifier.kind === "order";
   if (context === "nomor akun atau nomor pesanan terkait") return identifier.kind !== "unknown";
   return false;
 }
@@ -353,7 +368,7 @@ export function missingContextMessage(context: string | null, query: string, lan
 // could equally appear in a valid customer-facing sentence unrelated to
 // asking for an identifier (e.g. "Silakan cek email Anda untuk status...").
 export function isCustomerContextRequest(reply: string) {
-  return /\b(mohon|silakan|tolong)\b[^.!?]{0,80}\b(kirim|kirimkan|berikan|cantumkan|masukkan)\b[^.!?]{0,40}\b(nomor|akun|pesanan|order|email|id)\b/i.test(reply);
+  return /\b(mohon|silakan|tolong|please|kindly)\b[^.!?]{0,80}\b(kirim|kirimkan|berikan|cantumkan|masukkan|provide|send|share)\b[^.!?]{0,40}\b(nomor|akun|pesanan|order|email|id|account|number)\b/i.test(reply);
 }
 
 function withoutLeadingGreeting(value: string) {
@@ -381,8 +396,12 @@ export function reviseCustomerDraft(sourceReply: string, intent: ConversationInt
   return intent === "draft_regeneration" || intent === "draft_feedback" ? addDraftGreeting(body) : source;
 }
 
-function suppliedContextReply(reply: string, context: string, query: string) {
+function suppliedContextReply(reply: string, context: string, query: string, lang: ResponseLanguage) {
   if (!isCustomerContextRequest(reply)) return `${reply}.`;
+  if (lang === "en") {
+    const what = context === "nomor pesanan terkait" ? "order number" : context === "nomor atau email akun terkait" || context === "nomor akun terkait" ? "account number" : "account or order number";
+    return `Thank you, we have received the ${what}. We will follow up on this case and let you know the outcome.`;
+  }
   const label = context === "nomor pesanan terkait"
     ? "nomor pesanan"
     : context === "nomor atau email akun terkait"
@@ -394,9 +413,14 @@ function suppliedContextReply(reply: string, context: string, query: string) {
   return `Terima kasih, ${label} sudah kami terima. Kami akan membantu mengecek ${issue}, lalu menginformasikan hasilnya.`;
 }
 
-function suppliedIdentifierClarification(context: string | null) {
+function suppliedIdentifierClarification(context: string | null, english = false) {
+  if (english) {
+    if (context === "nomor akun atau nomor pesanan terkait") return "The number has been received. Please confirm: is it an account number or an order number?";
+    if (context === "nomor atau email akun terkait" || context === "nomor akun terkait") return "The number has been noted as case information. Please confirm it is the account number.";
+    return "The number has been noted as case information. Please confirm it is correct.";
+  }
   if (context === "nomor akun atau nomor pesanan terkait") return "Nomor sudah diterima. Mohon pastikan, itu nomor akun atau nomor pesanan?";
-  if (context === "nomor atau email akun terkait") return "Nomor dicatat sebagai info case. Mohon pastikan itu nomor akun.";
+  if (context === "nomor atau email akun terkait" || context === "nomor akun terkait") return "Nomor dicatat sebagai info case. Mohon pastikan itu nomor akun.";
   return "Nomor dicatat sebagai info case. Mohon pastikan nomor tersebut benar.";
 }
 
@@ -404,11 +428,16 @@ function topicClarification() {
   return "Boleh diperjelas, bagian mana dari topik poin sebelumnya yang masih kurang jelas, atau apakah ini pertanyaan baru?";
 }
 
-function suppliedContextAnswer(context: string, query: string) {
+function suppliedContextAnswer(context: string, query: string, lang: ResponseLanguage) {
+  if (lang === "en") {
+    const what = context === "nomor pesanan terkait" ? "order number" : context === "nomor atau email akun terkait" || context === "nomor akun terkait" ? "account number" : "account or order number";
+    const topic = /\b(balance|points?)\b.*\b(0|zero)\b|\b(0|zero)\b.*\b(balance|points?)\b/i.test(query) ? "the point balance showing 0" : "this case";
+    return `The ${what} has been received as case information. CS can check ${topic} using the steps in the knowledge base before updating the customer.`;
+  }
   const label = context === "nomor pesanan terkait"
     ? "nomor pesanan"
-    : context === "nomor atau email akun terkait"
-      ? "akun"
+    : context === "nomor atau email akun terkait" || context === "nomor akun terkait"
+      ? "nomor akun"
       : "akun atau nomor pesanan";
   const issue = /\b(saldo|poin|point)\b.*\b(0|nol|kosong)\b|\b(0|nol|hilang|kosong)\b.*\b(saldo|poin|point)\b/i.test(query)
     ? "saldo poin yang tampil 0"
@@ -421,8 +450,10 @@ export function pointAnswer(
   documents: KnowledgeDocument[],
   history: Array<{ role: "user" | "assistant"; content: string }> = [],
   currentDraft = "",
+  lang: ResponseLanguage = detectLanguage(query),
 ): GroundedAnswer | null {
   const intent = classifyConversationIntent(query, history, currentDraft);
+  const english = lang === "en";
   const contextQuery = continuationSignal(query, history)
     ? [...history.filter((message) => message.role === "user").slice(-3).map((message) => message.content), query].join(" ")
     : query;
@@ -462,8 +493,11 @@ export function pointAnswer(
     };
   }
 
-  const context = requiredContext(action, explicitContext);
-  const identifier = suppliedIdentifier(query);
+  const context = requiredContext(action, explicitContext, document.title);
+  const rawIdentifier = suppliedIdentifier(query);
+  // Only an account number is requested, so an unlabeled number is the account number.
+  const accountOnly = context === "nomor akun terkait" || context === "nomor atau email akun terkait";
+  const identifier = rawIdentifier?.kind === "unknown" && accountOnly ? { ...rawIdentifier, kind: "account" as const } : rawIdentifier;
   const priorUserMessages = history.filter((message) => message.role === "user");
   const latestPointIndex = [...priorUserMessages].reverse().findIndex((message) => isPointTopic(message.content));
   const currentPointHistory = latestPointIndex === -1
@@ -475,14 +509,19 @@ export function pointAnswer(
       return kind === "unknown" || kind === "account";
     })
     : undefined;
-  const identifierIsAmbiguous = Boolean(identifier?.kind === "unknown" && (context === "nomor akun atau nomor pesanan terkait" || context === "nomor atau email akun terkait"));
-  const missingContext = identifierIsAmbiguous ? suppliedIdentifierClarification(context) : missingContextMessage(context, contextQuery);
+  const identifierIsAmbiguous = Boolean(identifier?.kind === "unknown" && context === "nomor akun atau nomor pesanan terkait");
+  // A bare number counts as the account number when only an account is requested, in this turn or earlier ones.
+  const contextIdentifier = suppliedIdentifier(contextQuery);
+  const bareAccountNumber = contextIdentifier?.kind === "unknown" && accountOnly;
+  const missingContext = identifierIsAmbiguous
+    ? suppliedIdentifierClarification(context, english)
+    : bareAccountNumber ? null : missingContextMessage(context, contextQuery, english ? "en" : "id");
   const missingContextItems = missingContext ? [missingContext] : [];
-  const contextWasSupplied = Boolean(identifier && !identifierIsAmbiguous && contextSatisfied(context, query));
-  const accountConfirmation = Boolean(confirmedPriorNumber && (context === "nomor atau email akun terkait" || context === "nomor akun atau nomor pesanan terkait"));
+  const contextWasSupplied = Boolean(identifier && !identifierIsAmbiguous && (identifier !== rawIdentifier || contextSatisfied(context, query)));
+  const accountConfirmation = Boolean(confirmedPriorNumber && (context === "nomor atau email akun terkait" || context === "nomor akun atau nomor pesanan terkait" || context === "nomor akun terkait"));
   const orderConfirmation = Boolean(
     isOrderLabelOnly(query) &&
-    (context === "nomor pesanan terkait" || context === "nomor akun atau nomor pesanan terkait") &&
+    (context === "nomor pesanan terkait" || context === "nomor akun atau nomor pesanan terkait" || context === "nomor akun terkait") &&
     [...currentPointHistory].reverse().some((message) => suppliedIdentifier(message.content)?.kind === "unknown"),
   );
   if (isSarcasticOrDismissive(query) && currentPointHistory.length > 0) {
@@ -516,8 +555,10 @@ export function pointAnswer(
   const draft = intent === "draft_regeneration" || intent === "draft_feedback" || intent === "draft_edit"
     ? reviseCustomerDraft(reply, intent, currentDraft)
     : missingContextItems.length
-      ? identifierIsAmbiguous ? "" : `${reply}.`
-      : suppliedContextReply(reply, context ?? "", contextQuery);
+      ? identifierIsAmbiguous ? "" : target !== POINT_ARTICLE_TITLE_MATCHES[0] ? `${reply}.` : english
+        ? "Hi, we're sorry for the inconvenience. Some accounts may temporarily display a 0-point balance due to a technical issue. Could you please provide the customer's account number so we can verify the balance?"
+        : "Mohon maaf atas ketidaknyamanannya. Beberapa akun dapat menampilkan saldo poin 0 sementara karena kendala teknis. Mohon berikan nomor akun customer agar saldo dapat diverifikasi."
+      : suppliedContextReply(reply, context ?? "", contextQuery, lang);
   if (intent === "case_update" && !missingContextItems.length) {
     return {
       intent: "Case update",
@@ -532,13 +573,13 @@ export function pointAnswer(
   }
   const confirmed = accountConfirmation || orderConfirmation;
   const currentTurnAnswer = identifierIsAmbiguous
-    ? suppliedIdentifierClarification(context)
+    ? suppliedIdentifierClarification(context, english)
     : accountConfirmation
-      ? "Nomor tersebut dicatat sebagai nomor akun. Berdasarkan knowledge base, CS dapat mengecek saldo poin melalui riwayat poin dan transaksi terkait."
+      ? english ? "The account number has been received. CS can check the point balance, point history, and related transactions." : "Nomor tersebut dicatat sebagai nomor akun. Berdasarkan knowledge base, CS dapat mengecek saldo poin melalui riwayat poin dan transaksi terkait."
       : orderConfirmation
-        ? "Nomor tersebut dicatat sebagai nomor pesanan. Berdasarkan knowledge base, CS dapat mengecek saldo poin melalui riwayat poin dan transaksi terkait."
+        ? english ? "The order number has been received. CS can check the point balance, point history, and related transactions." : "Nomor tersebut dicatat sebagai nomor pesanan. Berdasarkan knowledge base, CS dapat mengecek saldo poin melalui riwayat poin dan transaksi terkait."
         : contextWasSupplied
-          ? suppliedContextAnswer(context ?? "", query)
+          ? suppliedContextAnswer(context ?? "", query, lang)
           : `${summary}.`;
   return {
     intent: intent === "guidance_follow_up" ? "Customer guidance" : confirmed || contextWasSupplied ? "Identifier received" : "Point support issue",
@@ -547,9 +588,9 @@ export function pointAnswer(
     recommended_action: action,
     answer: currentTurnAnswer,
     draft_reply: accountConfirmation
-      ? "Terima kasih, nomor akun sudah kami terima. Kami akan membantu mengecek saldo poin melalui riwayat poin dan transaksi terkait, lalu menginformasikan hasilnya."
+      ? english ? "Thank you, we have received the account number. We will follow up on the point balance once the case has been reviewed." : "Terima kasih, nomor akun sudah kami terima. Kami akan menindaklanjuti saldo poin setelah kasus ini ditinjau."
       : orderConfirmation
-        ? "Terima kasih, nomor pesanan sudah kami terima. Kami akan membantu mengecek saldo poin melalui riwayat poin dan transaksi terkait, lalu menginformasikan hasilnya."
+        ? english ? "Thank you, we have received the order number. We will follow up on the point balance once the case has been reviewed." : "Terima kasih, nomor pesanan sudah kami terima. Kami akan menindaklanjuti saldo poin setelah kasus ini ditinjau."
         : draft,
     citations,
     confidence: confirmed || !missingContextItems.length ? "high" : "low",
@@ -595,6 +636,18 @@ export async function retrieveKnowledge(query: string, history: Array<{ role: "u
   if (direct.length) return direct;
   if (targeted.length) return targeted;
   if (!continuationSignal(query, history) || !priorUserText) return selectPointArticle(own, null);
+
+  // A bare identifier may not match full-text search, but the previous point
+  // question already identifies the article. Retry that user turn before
+  // falling back to a generic clarification response.
+  const historicalPointQuestion = [...scopedHistory]
+    .reverse()
+    .find((message) => message.role === "user" && isPointTopic(message.content));
+  if (historicalPointQuestion) {
+    const historicalPointResults = scopeResults(await search(supabase, historicalPointQuestion.content));
+    const historicalPoint = selectPointArticle(historicalPointResults, pointTarget);
+    if (historicalPoint.length) return historicalPoint;
+  }
 
   const priorSearch = scopeResults(await search(supabase, scopedCombinedQuery));
   return selectPointArticle(priorSearch, pointTarget);

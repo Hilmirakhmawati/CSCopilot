@@ -1,5 +1,6 @@
 import { getSupabaseAdmin } from "./db";
 import { readChatbotAllowedDatabaseRows, findChildDatabaseId } from "./notion";
+import { logAuditFailure } from "./validation";
 
 // Web Crypto (not Node's `crypto` module) so this file has no Node-builtin
 // import — instrumentation.ts dynamically imports it, and Next bundles
@@ -21,11 +22,18 @@ export async function syncNotionKnowledge({ pageId, actorId, actionPrefix }: { p
   const databaseId = await findChildDatabaseId(pageId, DATABASE_TITLE);
   if (!databaseId) throw new Error(`Database "${DATABASE_TITLE}" not found under the root page`);
   const rows = await readChatbotAllowedDatabaseRows(databaseId);
+  // A transient or revoked Notion read can look like "zero allowed rows";
+  // deleting all knowledge on that signal is unrecoverable, so refuse.
+  if (rows.length === 0) throw new Error("Notion returned zero allowed rows; refusing to delete existing knowledge");
   const db = getSupabaseAdmin();
   const results: { title: string; action: string }[] = [];
   for (const row of rows) {
-    const contentHash = await sha256Hex(row.content);
+    // Title and url are synced columns too; hashing content alone left a
+    // renamed page looking "unchanged" forever.
+    const contentHash = await sha256Hex(JSON.stringify([row.title, row.url, row.content, row.last_edited_time]));
     const existing = await db.from("knowledge_documents").select("id,content_hash").eq("source", "notion").eq("notion_page_id", row.notion_page_id).maybeSingle();
+    // A failed read must not fall through to "inserted" and rewrite the row.
+    if (existing.error) throw existing.error;
     let action: "inserted" | "updated" | "unchanged" = "inserted";
     if (existing.data?.content_hash === contentHash) action = "unchanged";
     else if (existing.data) action = "updated";
@@ -36,15 +44,11 @@ export async function syncNotionKnowledge({ pageId, actorId, actionPrefix }: { p
     results.push({ title: row.title, action });
   }
   // Scope cleanup to Notion-sourced rows only — never touch rows from other
-  // sources — and delete all of them when a successful read returns zero
-  // allowed rows (all pages revoked/unpublished), not just the ones missing
-  // from a non-empty result.
-  const staleQuery = db.from("knowledge_documents").delete().eq("source", "notion");
-  const stale = rows.length > 0
-    ? await staleQuery.not("notion_page_id", "in", `(${rows.map((row) => `"${row.notion_page_id.replace(/"/g, '\\"')}"`).join(",")})`)
-    : await staleQuery;
+  // sources — and only remove the ones missing from this (non-empty) read.
+  const stale = await db.from("knowledge_documents").delete().eq("source", "notion").not("notion_page_id", "in", `(${rows.map((row) => `"${row.notion_page_id.replace(/"/g, '\\"')}"`).join(",")})`);
   if (stale.error) throw stale.error;
   const audit = await db.from("audit_events").insert({ actor_id: actorId, entity_type: "knowledge_document", entity_id: null, action: `${actionPrefix}_${results.length}_rows`, metadata: { duration_ms: Date.now() - startedAt, rows: results.length, trigger: actionPrefix.includes("scheduled") ? "scheduled" : "manual" } });
-  if (audit.error) throw audit.error;
+  // The sync already succeeded; a failed audit write must not turn it into a 500.
+  if (audit.error) logAuditFailure("notion sync", audit.error);
   return { synced: results.length, results };
 }

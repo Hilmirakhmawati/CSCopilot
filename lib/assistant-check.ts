@@ -7,7 +7,8 @@ import type { Citation, KnowledgeDocument } from "./assistant-types";
 import { filterDocumentsByProject, projectNames, resolveProjectScope } from "./project-scope";
 import { enforceMissingContextInvariant, hasCustomerFacingSourceLeak, hasFabricatedCheckClaim, sanitizeAnswer } from "./answer-safety";
 import { buildGuidance, splitItems } from "./case-guidance";
-import { detectLanguage } from "./language";
+import { detectConversationLanguage, detectLanguage } from "./language";
+import { isSuppliedContextMessage, suppliedIdentifier } from "./retrieval";
 
 export { enforceMissingContextInvariant, hasCustomerFacingSourceLeak, hasFabricatedCheckClaim, sanitizeAnswer } from "./answer-safety";
 
@@ -23,11 +24,16 @@ if (process.argv[1]?.endsWith("assistant-check.ts")) {
   assert.equal(hasFabricatedCheckClaim("Saldo sudah kami cek."), true);
   assert.equal(hasFabricatedCheckClaim("Saldo akan kami bantu cek."), false);
   assert.equal(hasFabricatedCheckClaim("Saya akan mengecek saldo akun."), true);
+  for (const claim of ["Sudah saya cek saldo Anda.", "Kami sedang memeriksa akun Anda.", "Saldo poin Anda adalah 0.", "I've checked your account.", "I can see your balance is 0.", "We are checking the order.", "Your current balance is 0.", "I will check the history.", "Tim kami melakukan audit dan penyesuaian saldo.", "Our team performed a manual adjustment."]) assert.equal(hasFabricatedCheckClaim(claim), true, claim);
+  for (const ok of ["CS dapat mengecek riwayat poin.", "CS can check the point history.", "Please check the point balance and related transactions.", "I don't have direct access to the customer's account data, so I cannot verify the balance."]) assert.equal(hasFabricatedCheckClaim(ok), false, ok);
   const fabricatedClaim = sanitizeAnswer({
     intent: "Support issue", summary: "", missing_context: [], recommended_action: "", answer: "Saldo sudah kami cek.", draft_reply: "Saldo sudah kami cek.", citations: [], confidence: "high",
   });
   assert.equal(fabricatedClaim.confidence, "low");
-  assert.equal(fabricatedClaim.draft_reply, "");
+  assert.notEqual(fabricatedClaim.draft_reply, "");
+  assert.equal(hasFabricatedCheckClaim(fabricatedClaim.draft_reply), false);
+  assert.match(fabricatedClaim.answer, /Tindakan CS/i);
+  assert.match(fabricatedClaim.safety_warning ?? "", /verifikasi/i);
   assert.doesNotMatch(fabricatedClaim.answer, /sudah kami cek/i);
 
   assert.deepEqual(splitItems("1. Cek riwayat | 2) Cek transaksi | - Catat hasil"), ["Cek riwayat", "Cek transaksi", "Catat hasil"]);
@@ -71,6 +77,17 @@ if (process.argv[1]?.endsWith("assistant-check.ts")) {
   assert.equal(pointArticleTitle("Perhitungan penggunaan poin saya salah"), POINT_ARTICLE_TITLE_MATCHES[2]);
   assert.equal(pointArticleTitle("Riwayat poin pada pesanan umum tidak konsisten"), POINT_ARTICLE_TITLE_MATCHES[3]);
   assert.equal(pointArticleTitle("Ada selisih saldo poin, minta audit"), POINT_ARTICLE_TITLE_MATCHES[4]);
+  // Phase 5: every suggested question (ID + EN) and the roadmap examples route to their own article.
+  const intentCases: Array<[string, number]> = [
+    ["Kenapa saldo poin 0?", 0], ["Kenapa riwayat poin beda?", 1], ["Cara cek perhitungan poin?", 2], ["Kenapa riwayat poin tidak sesuai?", 1], ["Cara audit saldo poin?", 4],
+    ["Why is the point balance 0?", 0], ["Why does the point history differ?", 1], ["How to check the point calculation?", 2], ["Why doesn't the point history match?", 1], ["How to audit a point balance?", 4],
+    ["Why is my point history different?", 1], ["How are points calculated?", 2],
+  ];
+  for (const [question, index] of intentCases) {
+    assert.equal(pointArticleTitle(question), POINT_ARTICLE_TITLE_MATCHES[index], question);
+    assert.equal(isPointTopic(question), true, question);
+  }
+  assert.equal(pointArticleTitle("How do I reset my password?"), null);
   assert.equal(isPointTopic("Poin saya tiba-tiba jadi nol"), true);
   assert.equal(isPointTopic("Bagaimana cara reset password customer?"), false);
   assert.equal(isPointTopic("Bagaimana proses refund order?"), false);
@@ -208,7 +225,81 @@ if (process.argv[1]?.endsWith("assistant-check.ts")) {
   assert.equal(verifiedPoint?.missing_context.length, 0);
   assert.notEqual(verifiedPoint?.draft_reply, "");
   assert.equal(verifiedPoint?.draft_reply.includes("Minta nomor pesanan terkait untuk verifikasi"), false);
+  const englishAccountFollowUp = pointAnswer("13141411414 this account data", [{ ...zeroBalanceDocuments[0], content: zeroBalanceDocuments[0].content.replace("Nomor order", "Nomor akun").replace("nomor pesanan terkait", "nomor akun terkait") }], [{ role: "user", content: "Why is my point balance 0?" }]);
+  assert.equal(detectLanguage("121311425255 account daya"), "en");
+  assert.equal(detectLanguage("083119349222 akun saya"), "id");
+  assert.equal(suppliedIdentifier("121311425255 account daya")?.kind, "account");
+  assert.equal(isSuppliedContextMessage("121311425255 account daya"), true);
+  const typoFollowUp = pointAnswer("121311425255 account daya", [{ ...zeroBalanceDocuments[0], content: zeroBalanceDocuments[0].content.replace("Nomor order", "Nomor akun").replace("nomor pesanan terkait", "nomor akun terkait") }], [{ role: "user", content: "Why is my point balance 0?" }]);
+  assert.equal(typoFollowUp?.intent, "Identifier received");
+  assert.doesNotMatch(`${typoFollowUp?.answer} ${typoFollowUp?.draft_reply}`, /Belum ada knowledge|Status Knowledge|pesan error/i);
+  // Exact reported transcript: "<number> CUSTOMER NUMBER" is the account number, in English.
+  const customerNumberDoc = [{ ...zeroBalanceDocuments[0], content: zeroBalanceDocuments[0].content.replace("Nomor order", "Nomor akun").replace("nomor pesanan terkait", "nomor akun terkait") }];
+  for (const text of ["12344125255 CUSTOMER NUMBER", "customer number 12344125255", "12344125255 customer number", "nomor customer 12344125255"]) {
+    assert.equal(suppliedIdentifier(text)?.kind, "account", text);
+    assert.equal(isSuppliedContextMessage(text), true, text);
+  }
+  assert.equal(detectLanguage("12344125255 CUSTOMER NUMBER"), "en");
+  assert.equal(detectLanguage("nomor customer 12344125255"), "id");
+  const customerNumber = pointAnswer("12344125255 CUSTOMER NUMBER", customerNumberDoc, [
+    { role: "user", content: "Why is my point balance 0?" },
+    { role: "assistant", content: "Please provide the account number." },
+  ]);
+  assert.equal(customerNumber?.intent, "Identifier received");
+  assert.equal(customerNumber?.missing_context.length, 0);
+  assert.match(customerNumber?.answer ?? "", /account number has been received/i);
+  assert.doesNotMatch(`${customerNumber?.answer} ${customerNumber?.draft_reply}`, /Belum ada knowledge|Status Knowledge|diperjelas/i);
+  assert.notEqual(customerNumber?.draft_reply, "");
+  assert.equal(englishAccountFollowUp?.intent, "Identifier received");
+  assert.equal(englishAccountFollowUp?.missing_context.length, 0);
+  assert.match(englishAccountFollowUp?.answer ?? "", /account number has been received|account number has been received as case information/i);
+  assert.match(englishAccountFollowUp?.draft_reply ?? "", /account number|account data/i);
   assert.equal(point?.answer.includes("akan disesuaikan"), false);
+
+  // Conversation-level language: neutral follow-ups inherit; explicit switches win.
+  const enHistory = [{ role: "user" as const, content: "Why is my point balance 0?" }, { role: "assistant" as const, content: "Please provide the account number." }];
+  assert.equal(detectConversationLanguage("12344125255", enHistory), "en");
+  assert.equal(detectConversationLanguage("ok", enHistory), "en");
+  assert.equal(detectConversationLanguage("Kenapa saldo poin 0?", enHistory), "id");
+  assert.equal(detectConversationLanguage("12344125255"), "id");
+  assert.equal(detectConversationLanguage("12344125255", [{ role: "user", content: "Kenapa saldo poin 0?" }]), "id");
+  assert.equal(continuationSignal("ok how can i check it?", enHistory), true);
+  // Reported: "what should i do for next" after an account number fell to "which part of the previous topic".
+  for (const text of ["what should i do for next", "what should I do next?", "what's next", "next steps?", "apa langkah selanjutnya"]) assert.equal(continuationSignal(text, enHistory), true, text);
+  const nextSteps = pointAnswer("what should i do for next", customerNumberDoc, [
+    { role: "user", content: "Why is the customer's point balance showing 0?" },
+    { role: "assistant", content: "Please provide the account number." },
+    { role: "user", content: "1561381478178" },
+  ], "", "en");
+  assert.equal(nextSteps?.missing_context.length, 0);
+  assert.ok(nextSteps?.citations.length);
+  assert.match(`${nextSteps?.answer} ${nextSteps?.recommended_action}`, /poin|saldo|point|balance|history|riwayat|verifikasi|check/i);
+  assert.equal(continuationSignal("Pembayaran saya gagal"), false);
+  const neutralEn = pointAnswer("12344125255", customerNumberDoc, enHistory, "", detectConversationLanguage("12344125255", enHistory));
+  assert.equal(neutralEn?.intent, "Identifier received");
+  for (const text of [neutralEn?.answer, neutralEn?.draft_reply, ...(neutralEn?.missing_context ?? [])]) assert.notEqual(detectLanguage(text ?? ""), "id", text);
+  // Reported: after "153184104" the draft and "Required" must stop asking for the account number.
+  assert.equal(neutralEn?.missing_context.length, 0);
+  assert.doesNotMatch(neutralEn?.draft_reply ?? "", /provide the customer's account number/i);
+  assert.notEqual(neutralEn?.draft_reply, "");
+  const bareAfterPoint = pointAnswer("153184104", customerNumberDoc, enHistory, "", "en");
+  assert.equal(bareAfterPoint?.missing_context.length, 0);
+  const neutralGuided = buildGuidance({ ...guideBase, citations: [{ document_id: "g1", title: "t", url: null, quote: "q" }] }, [fullDoc], "12344125255", enHistory, Date.now(), "en");
+  assert.ok(neutralGuided.case_understanding?.received.every((label) => /not verified|unclear/.test(label)));
+  // No API key / CSCOPILOT_NO_AI: guidance for an English conversation must not stay Indonesian.
+  void (async () => {
+    const previousNoAi = process.env.CSCOPILOT_NO_AI;
+    process.env.CSCOPILOT_NO_AI = "1";
+    try {
+      const translatedGuide = await generateGroundedAnswer("Why is my point balance 0?", [{ ...fullDoc, id: "g1", title: POINT_ARTICLE_TITLE_MATCHES[0] }], [], "", "", "en");
+      assert.ok(translatedGuide.next_actions?.length);
+      for (const item of [...(translatedGuide.next_actions ?? []), ...(translatedGuide.escalate_when ?? [])]) assert.notEqual(detectLanguage(item), "id", item);
+      console.log("neutral English guidance check passed");
+    } finally {
+      if (previousNoAi === undefined) delete process.env.CSCOPILOT_NO_AI;
+      else process.env.CSCOPILOT_NO_AI = previousNoAi;
+    }
+  })();
 
   // Regression: the visible answer must follow identifier follow-ups instead
   // of repeating the initial point-balance summary.
@@ -222,13 +313,13 @@ if (process.argv[1]?.endsWith("assistant-check.ts")) {
   const bareIdentifier = pointAnswer("12142424 ini ya", accountRequiredDocuments, pointConversation);
   assert.ok(bareIdentifier);
   assert.match(bareIdentifier?.answer ?? "", /nomor akun/i);
-  assert.equal(bareIdentifier?.draft_reply, "");
+  assert.notEqual(bareIdentifier?.draft_reply, "");
   const suppliedAccountAnswer = pointAnswer("Akunnya Rani 083119349229", accountRequiredDocuments, pointConversation);
   assert.ok(suppliedAccountAnswer);
-  assert.match(suppliedAccountAnswer?.answer ?? "", /informasi akun.*diterima|memeriksa saldo poin/i);
+  assert.match(suppliedAccountAnswer?.answer ?? "", /informasi (?:nomor )?akun.*diterima|memeriksa saldo poin/i);
   assert.doesNotMatch(suppliedAccountAnswer?.answer ?? "", /Beberapa akun sempat menampilkan saldo poin 0/i);
   assert.equal(suppliedAccountAnswer?.missing_context.length, 0);
-  assert.match(suppliedAccountAnswer?.draft_reply ?? "", /informasi akun sudah kami terima/i);
+  assert.match(suppliedAccountAnswer?.draft_reply ?? "", /informasi (?:nomor )?akun sudah kami terima/i);
 
   // Exact reported transcript: a later "no akun" confirms the preceding bare
   // number, and "itu aja?" asks for clarification about the active point topic.
@@ -775,8 +866,13 @@ if (process.argv[1]?.endsWith("assistant-check.ts")) {
     process.env.CSCOPILOT_NO_AI = "1";
     try {
       const english = await generateGroundedAnswer("Why is my points balance 0?", zeroBalanceDocuments);
-      assert.match(english.answer, /could not be translated/i);
-      assert.doesNotMatch(english.draft_reply, /could not be translated/i);
+      assert.match(english.answer, /don't have direct access/i);
+      assert.equal(detectLanguage(english.answer), "en");
+      assert.equal(hasFabricatedCheckClaim(english.answer), false);
+      assert.doesNotMatch(english.answer, /audit|penyesuaian|tim kami/i);
+      assert.doesNotMatch(english.draft_reply, /could not be translated|mengecek|kami dapat/i);
+      const received = await generateGroundedAnswer("My account number is 123456789", zeroBalanceDocuments, [{ role: "user", content: "Why is my points balance 0?" }]);
+      if (received.intent === "Identifier received") assert.match(received.answer, /has been received\. I don't have direct access/i);
       const indonesian = await generateGroundedAnswer("Kenapa saldo poin 0?", zeroBalanceDocuments);
       assert.doesNotMatch(indonesian.answer, /could not be translated/i);
       console.log("untranslated point answer check passed");

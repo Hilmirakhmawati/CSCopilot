@@ -13,18 +13,24 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     const content = readText(body.content);
     const restoredFromVersion = Number.isInteger(body.restored_from_version) ? body.restored_from_version : null;
     const db = getSupabaseAdmin();
-    const draft = await db.from("drafts").select("id,conversation_id,content").eq("id", id).single();
-    if (draft.error) throw new Error("Draft not found or already reviewed");
+    const draft = await db.from("drafts").select("id,conversation_id,content,status").eq("id", id).single();
+    if (draft.error || draft.data.status !== "draft") throw new Error("Draft not found or already reviewed");
     const owner = await db.from("conversations").select("id").eq("id", draft.data.conversation_id).eq("created_by", user.id).single();
     if (owner.error) throw new Error("Draft not found or already reviewed");
     // Snapshot the previous content before overwriting, so edits are never
     // destructive. If the snapshot insert fails, the update must not proceed.
     if (draft.data.content !== content) {
-      const count = await db.from("draft_versions").select("version").eq("draft_id", id).order("version", { ascending: false }).limit(1).maybeSingle();
-      if (count.error) throw count.error;
-      const nextVersion = (count.data?.version ?? 0) + 1;
-      const snapshot = await db.from("draft_versions").insert({ draft_id: id, content: draft.data.content, version: nextVersion, created_by: user.id });
-      if (snapshot.error) throw snapshot.error;
+      // Two concurrent edits can pick the same next version and hit
+      // unique(draft_id, version) (23505); re-read and retry instead of 500.
+      let nextVersion = 0;
+      for (let attempt = 0; ; attempt++) {
+        const count = await db.from("draft_versions").select("version").eq("draft_id", id).order("version", { ascending: false }).limit(1).maybeSingle();
+        if (count.error) throw count.error;
+        nextVersion = (count.data?.version ?? 0) + 1;
+        const snapshot = await db.from("draft_versions").insert({ draft_id: id, content: draft.data.content, version: nextVersion, created_by: user.id });
+        if (!snapshot.error) break;
+        if (snapshot.error.code !== "23505" || attempt >= 2) throw snapshot.error;
+      }
       // Keep only the most recent MAX_VERSIONS snapshots — unbounded history
       // would otherwise grow the table forever.
       const prune = await db.from("draft_versions").delete().eq("draft_id", id).lte("version", nextVersion - MAX_VERSIONS);
