@@ -1,0 +1,596 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>CSCopilot Sparta</title>
+<meta name="description" content="Presentasi proyek CSCopilot untuk Sparta: proposal, hasil, tantangan, pembelajaran, dan langkah berikutnya.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+<style>
+/* Layout: fixed 1920x1080 (16:9) stage scaled to fit any screen. White ground, Timedoor green #10AF13 as the one signal color. */
+:root {
+  --bg: #ffffff;
+  --surface: #ffffff;
+  --surface-2: #eff8ee;
+  --ink: #0d2410;
+  --muted: #4d654a;
+  --line: #d3e4d0;
+  --accent: #10AF13;
+  --accent-ink: #0a7a0d;
+  --accent-soft: #d4efd2;
+  --on-accent: #04230a;
+  --amber: #b97514;
+  --coral: #c9524d;
+  --display: "Space Grotesk", "Segoe UI", sans-serif;
+  --body: "Manrope", "Segoe UI", sans-serif;
+  --mono: "DM Mono", Consolas, monospace;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--body); overflow: hidden; display: flex; flex-direction: column; }
+button { font: inherit; }
+button:focus-visible { outline: 3px solid var(--amber); outline-offset: 3px; }
+h1, h2, h3, p, dl, dd, blockquote { margin: 0; }
+h1, h2, h3 { font-family: var(--display); text-wrap: balance; }
+
+#frame { flex: 1; min-height: 0; position: relative; overflow: hidden; margin-inline: 16px; }
+#stage { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; transform-origin: 0 0; background: var(--surface); box-shadow: 0 0 0 1px var(--line), 0 30px 80px rgba(16, 90, 20, .12); }
+
+/* ---------- slide base (all sizes in 1920x1080 px) ---------- */
+.slide { display: none; position: absolute; inset: 0; padding: 84px 120px 72px; overflow: hidden; background: var(--surface); }
+.slide.active { display: flex; flex-direction: column; animation: enter .4s ease both; }
+@keyframes enter { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+.slide::before { content: ""; position: absolute; left: 0; top: 0; width: 14px; height: 100%; background: var(--accent); }
+.slide::after { content: ""; position: absolute; width: 640px; height: 640px; border-radius: 50%; background: var(--surface-2); right: -240px; bottom: -280px; z-index: 0; pointer-events: none; }
+.slide > * { position: relative; z-index: 1; }
+.slide-number { position: absolute; top: 56px; right: 120px; color: var(--muted); font: 500 18px var(--mono); letter-spacing: .08em; }
+.brandline { position: absolute; left: 120px; bottom: 36px; display: flex; align-items: center; gap: 12px; color: var(--muted); font: 500 16px var(--mono); letter-spacing: .06em; z-index: 1; }
+.brandline i { width: 14px; height: 14px; background: var(--accent); transform: rotate(45deg); display: block; }
+.eyebrow { color: var(--accent-ink); font: 500 20px var(--mono); letter-spacing: .14em; text-transform: uppercase; margin-bottom: 26px; }
+h1 { max-width: 1320px; font-size: 112px; line-height: .98; letter-spacing: -.06em; }
+h2 { max-width: 1500px; font-size: 62px; line-height: 1.05; letter-spacing: -.05em; }
+h3 { font-size: 30px; line-height: 1.12; letter-spacing: -.02em; }
+.lede { max-width: 1000px; margin-top: 30px; color: var(--muted); font-size: 30px; line-height: 1.5; }
+.body-copy { color: var(--muted); font-size: 26px; line-height: 1.6; }
+.mini { color: var(--accent-ink); font: 500 16px var(--mono); letter-spacing: .09em; text-transform: uppercase; }
+.list { display: grid; gap: 22px; margin: 34px 0 0; padding: 0; list-style: none; counter-reset: li; }
+.list li { counter-increment: li; display: grid; grid-template-columns: 46px minmax(0, 1fr); gap: 20px; align-items: start; color: var(--muted); font-size: 26px; line-height: 1.45; }
+.list li::before { content: counter(li, decimal-leading-zero); width: 42px; height: 42px; border: 2px solid var(--accent); border-radius: 50%; display: grid; place-items: center; color: var(--accent-ink); font: 500 15px var(--mono); }
+.split { display: grid; grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr); gap: 80px; align-items: center; flex: 1; min-height: 0; }
+.copy { min-width: 0; }
+.notes { display: none; }
+
+/* ---------- hero ---------- */
+.hero { justify-content: space-between; }
+.hero-label { display: inline-flex; align-items: center; gap: 14px; color: var(--muted); font: 500 22px var(--mono); margin-bottom: 30px; }
+.pulse { width: 14px; height: 14px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 10px rgba(16, 175, 19, .16); }
+.hero-grid { display: grid; grid-template-columns: minmax(0, 1fr) 640px; gap: 80px; align-items: end; }
+.hero-foot { display: flex; flex-wrap: wrap; gap: 14px; padding-bottom: 30px; }
+.tag { display: inline-flex; align-items: center; gap: 10px; padding: 14px 22px; border: 2px solid var(--line); border-radius: 999px; color: var(--muted); font-size: 22px; }
+.tag b { color: var(--accent-ink); font-family: var(--mono); font-weight: 500; }
+.hero-visual { padding: 34px; border: 2px solid var(--line); background: var(--surface-2); border-radius: 28px; transform: rotate(1.5deg); }
+.hero-visual::before { content: "GROUNDED ANSWER"; display: block; margin-bottom: 26px; color: var(--muted); font: 500 15px var(--mono); letter-spacing: .1em; }
+.chat-line { display: flex; margin-bottom: 18px; }
+.chat-line.right { justify-content: flex-end; }
+.bubble { max-width: 92%; padding: 18px 22px; border-radius: 20px; font-size: 22px; line-height: 1.4; }
+.bubble.user { background: var(--accent); color: var(--on-accent); font-weight: 700; border-bottom-right-radius: 6px; }
+.bubble.ai { background: var(--surface); border: 2px solid var(--line); border-bottom-left-radius: 6px; }
+.bubble.ai strong { color: var(--accent-ink); }
+
+/* ---------- facts / problem / roles ---------- */
+.facts { border-top: 2px solid var(--line); }
+.fact { display: grid; grid-template-columns: 250px minmax(0, 1fr); gap: 28px; padding: 21px 0; border-bottom: 2px solid var(--line); font-size: 24px; line-height: 1.4; }
+.fact dt { color: var(--accent-ink); font: 500 17px var(--mono); letter-spacing: .08em; text-transform: uppercase; padding-top: 5px; }
+.fact dd { color: var(--muted); }
+.fact dd strong { color: var(--ink); }
+.problem-board { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+.problem-card { padding: 28px; border-top: 6px solid var(--coral); background: var(--surface-2); min-height: 210px; }
+.problem-card:nth-child(2) { border-color: var(--amber); }
+.problem-card:nth-child(3) { border-color: var(--accent); }
+.problem-card:nth-child(4) { border-color: var(--ink); }
+.problem-card h3 { margin-top: 16px; }
+.problem-card p { margin-top: 10px; color: var(--muted); font-size: 21px; line-height: 1.45; }
+.roles { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 16px; margin-top: 36px; }
+.role { padding: 22px 24px; background: var(--surface-2); border-top: 6px solid var(--accent); }
+.role.stake { border-color: var(--amber); }
+.role h3 { margin-top: 10px; font-size: 26px; }
+.role p { margin-top: 6px; color: var(--muted); font-size: 19px; line-height: 1.35; }
+
+/* ---------- flow ---------- */
+.flow { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 34px; margin-top: 54px; }
+.flow-step { position: relative; padding: 32px 28px; background: var(--surface-2); border: 2px solid var(--line); min-width: 0; min-height: 300px; }
+.flow-step:not(:last-child)::after { content: "→"; position: absolute; right: -34px; top: 50%; transform: translate(0, -50%); width: 34px; text-align: center; color: var(--accent-ink); font-size: 30px; }
+.flow-step h3 { margin-top: 38px; }
+.flow-step p { margin-top: 14px; color: var(--muted); font-size: 21px; line-height: 1.45; }
+.principle { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); margin-top: 52px; border: 2px solid var(--line); background: var(--surface); }
+.principle div { padding: 22px 26px; border-right: 2px solid var(--line); font-size: 21px; color: var(--muted); }
+.principle div:last-child { border-right: 0; }
+.principle b { display: block; margin-bottom: 4px; color: var(--ink); font: 700 26px var(--display); }
+
+/* ---------- value ---------- */
+.value-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; margin-top: 44px; }
+.value { padding: 28px 32px; background: var(--surface-2); border-left: 6px solid var(--accent); min-width: 0; }
+.value:nth-child(even) { border-color: var(--amber); }
+.value h3 { font-size: 29px; margin-top: 12px; }
+.value ul { margin: 14px 0 0; padding-left: 24px; color: var(--muted); font-size: 21px; line-height: 1.55; }
+
+/* ---------- scope ---------- */
+.scope { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, .95fr); gap: 28px; margin-top: 40px; }
+.scope-col { padding: 30px 36px; min-width: 0; }
+.scope-col.in { background: var(--surface-2); border-top: 6px solid var(--accent); }
+.scope-col.out { background: var(--surface); border: 2px dashed var(--line); border-top: 6px solid var(--coral); }
+.scope-col h3 { margin-bottom: 12px; }
+.scope-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 20px; align-items: baseline; padding: 13px 0; border-top: 2px solid var(--line); font-size: 22px; line-height: 1.3; }
+.scope-row span:last-child { color: var(--accent-ink); font: 500 17px var(--mono); text-align: right; }
+.scope-col.out .scope-row { grid-template-columns: 1fr; gap: 2px; }
+.scope-col.out .scope-row span:last-child { color: var(--muted); font: 400 19px var(--body); text-align: left; }
+.agent-flow { margin-top: 28px; padding: 22px 32px; background: var(--ink); color: #fff; font: 500 22px var(--mono); line-height: 1.5; }
+
+/* ---------- result ---------- */
+.cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; margin-top: 40px; }
+.card { padding: 28px 32px; border: 2px solid var(--line); background: var(--surface-2); min-width: 0; }
+.card.featured { background: var(--accent); border-color: var(--accent); }
+.card.featured .mini, .card.featured p { color: var(--on-accent); }
+.card h3 { margin-top: 12px; }
+.card p { margin-top: 10px; color: var(--muted); font-size: 21px; line-height: 1.45; }
+.criteria { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 24px; margin-top: 28px; }
+.crit { display: grid; grid-template-columns: 38px minmax(0, 1fr) auto; gap: 18px; align-items: center; padding: 15px 22px; background: var(--surface-2); font-size: 21px; line-height: 1.3; }
+.crit .dot-s { width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; font: 700 18px var(--mono); background: var(--accent); color: var(--on-accent); }
+.crit.todo .dot-s { background: transparent; border: 3px dashed var(--amber); color: var(--amber); }
+.crit .state { font: 500 15px var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--accent-ink); white-space: nowrap; }
+.crit.todo .state { color: var(--amber); }
+.stat-row { display: flex; gap: 90px; margin-top: auto; padding-top: 18px; }
+.stat { display: flex; align-items: baseline; gap: 18px; }
+.stat strong { color: var(--accent-ink); font: 700 64px var(--display); letter-spacing: -.06em; }
+.stat span { color: var(--muted); font-size: 21px; max-width: 220px; line-height: 1.25; }
+
+/* ---------- demo ---------- */
+.demo { display: grid; grid-template-columns: minmax(0, .8fr) minmax(0, 1.2fr); gap: 32px; margin-top: 56px; flex: 1; min-height: 0; margin-bottom: 40px; }
+.demo-prompt { padding: 44px; background: var(--ink); color: #fff; display: flex; flex-direction: column; justify-content: space-between; gap: 24px; }
+.demo-prompt .mini { color: #55e059; }
+.demo-prompt blockquote { font: 600 52px var(--display); line-height: 1.08; letter-spacing: -.04em; }
+.demo-answer { border: 2px solid var(--line); padding: 38px 44px; background: var(--surface-2); min-width: 0; display: flex; flex-direction: column; }
+.answer-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding-bottom: 22px; border-bottom: 2px solid var(--line); color: var(--muted); font: 500 17px var(--mono); }
+.status { color: var(--accent-ink); }
+.answer-body { padding-top: 26px; color: var(--muted); font-size: 25px; line-height: 1.55; }
+.answer-body strong { color: var(--ink); }
+.citation { align-self: flex-start; margin-top: auto; padding: 12px 18px; background: var(--accent-soft); color: var(--accent-ink); font: 500 18px var(--mono); }
+
+/* ---------- wireframe ---------- */
+.wire-row { display: grid; grid-template-columns: 560px minmax(0, 1fr); gap: 36px; margin-top: 40px; flex: 1; min-height: 0; margin-bottom: 40px; }
+.wire { border: 2px solid var(--line); background: var(--surface-2); padding: 22px; min-width: 0; display: flex; flex-direction: column; gap: 16px; }
+.wire-cap { color: var(--muted); font: 500 16px var(--mono); letter-spacing: .09em; text-transform: uppercase; }
+.wire-login { flex: 1; display: grid; place-items: center; }
+.login-box { width: 380px; padding: 36px; background: var(--surface); border: 2px solid var(--line); display: grid; gap: 16px; }
+.login-box .logo { width: 40px; height: 40px; background: var(--accent); transform: rotate(45deg); margin: 6px auto 14px; }
+.field { height: 52px; border: 2px solid var(--line); border-radius: 10px; display: flex; align-items: center; padding-inline: 16px; color: var(--muted); font-size: 19px; }
+.btn-w { height: 54px; border-radius: 10px; background: var(--accent); color: var(--on-accent); display: grid; place-items: center; font: 700 21px var(--body); }
+.wire-main { flex: 1; display: grid; grid-template-columns: 230px minmax(0, 1fr); background: var(--surface); border: 2px solid var(--line); min-height: 0; }
+.side { border-right: 2px solid var(--line); padding: 18px; display: grid; gap: 12px; align-content: start; font-size: 18px; color: var(--muted); }
+.side .new { background: var(--accent); color: var(--on-accent); font-weight: 700; padding: 12px; border-radius: 10px; text-align: center; }
+.side .hist { padding: 10px 12px; border-radius: 8px; background: var(--surface-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chat { padding: 20px 24px; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.chat .b { max-width: 82%; padding: 14px 18px; border-radius: 16px; font-size: 20px; line-height: 1.4; }
+.chat .b.u { align-self: flex-end; background: var(--accent); color: var(--on-accent); font-weight: 700; }
+.chat .b.a { background: var(--surface-2); }
+.chat .src { align-self: flex-start; font: 500 16px var(--mono); color: var(--accent-ink); background: var(--accent-soft); padding: 8px 14px; }
+.chat .actions { align-self: flex-start; display: flex; gap: 12px; }
+.chat .actions span { font-size: 19px; padding: 8px 20px; border: 2px solid var(--line); border-radius: 8px; color: var(--muted); }
+.chat .actions span:first-child { background: var(--accent); color: var(--on-accent); border-color: var(--accent); font-weight: 700; }
+.composer { margin-top: auto; border: 2px solid var(--line); border-radius: 12px; padding: 14px 18px; font-size: 19px; color: var(--muted); display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.composer i { font-style: normal; background: var(--accent); color: var(--on-accent); width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; font-size: 18px; flex: none; }
+
+/* ---------- challenges ---------- */
+.challenge-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 28px; margin-top: 50px; }
+.challenge { padding: 34px 40px; border-left: 8px solid var(--amber); background: var(--surface-2); min-width: 0; }
+.challenge:nth-child(2) { border-color: var(--coral); }
+.challenge:nth-child(3) { border-color: var(--accent); }
+.challenge:nth-child(4) { border-color: var(--ink); }
+.challenge .mini { color: var(--muted); font-size: 15px; }
+.challenge h3 { margin-top: 12px; font-size: 32px; }
+.challenge p { margin-top: 14px; color: var(--muted); font-size: 23px; line-height: 1.5; }
+
+/* ---------- learning ---------- */
+.learning { display: grid; grid-template-columns: minmax(0, .85fr) minmax(0, 1.15fr); gap: 90px; align-items: center; flex: 1; min-height: 0; }
+.learning-quote { padding: 56px; background: var(--accent); color: var(--on-accent); }
+.learning-quote p { font: 700 62px var(--display); line-height: 1.06; letter-spacing: -.05em; }
+.learning-quote small { display: block; margin-top: 36px; font: 500 17px var(--mono); letter-spacing: .08em; }
+
+/* ---------- roadmap ---------- */
+.roadmap { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 28px; margin-top: 56px; }
+.road { padding: 38px; border-top: 8px solid var(--accent); background: var(--surface-2); min-width: 0; min-height: 520px; }
+.road:nth-child(2) { border-color: var(--amber); }
+.road:nth-child(3) { border-color: var(--coral); }
+.road .time { color: var(--accent-ink); font: 500 17px var(--mono); letter-spacing: .09em; text-transform: uppercase; }
+.road:nth-child(2) .time { color: var(--amber); }
+.road:nth-child(3) .time { color: var(--coral); }
+.road h3 { margin-top: 28px; font-size: 36px; }
+.road p { margin-top: 16px; color: var(--muted); font-size: 23px; line-height: 1.5; }
+.road ul { margin: 22px 0 0; padding-left: 28px; color: var(--muted); font-size: 23px; line-height: 1.7; }
+
+/* ---------- close ---------- */
+.close { justify-content: center; }
+.close-mark { width: 84px; height: 84px; display: grid; place-items: center; background: var(--accent); color: var(--on-accent); font: 500 34px var(--mono); transform: rotate(45deg); margin: 0 0 70px 14px; }
+.close-mark span { transform: rotate(-45deg); }
+.close h2 { font-size: 92px; max-width: 1400px; }
+.close-line { max-width: 1100px; margin-top: 40px; color: var(--muted); font-size: 32px; line-height: 1.5; }
+.close-meta { margin-top: 70px; color: var(--muted); font: 500 20px var(--mono); }
+
+/* ---------- chrome (outside the stage) ---------- */
+#notesBar { display: none; margin: 8px 16px 0; padding: 10px 16px; max-height: 22vh; overflow: auto; border-left: 4px solid var(--amber); background: var(--surface-2); color: var(--muted); font-size: 14px; line-height: 1.55; }
+#notesBar.visible { display: block; }
+#notesBar strong { color: var(--amber); font-family: var(--mono); font-size: 12px; letter-spacing: .06em; }
+.controls { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 16px calc(10px + env(safe-area-inset-bottom, 0px)); }
+.control-group { display: flex; align-items: center; gap: 8px; }
+.nav-btn { border: 1px solid var(--line); background: var(--surface); color: var(--ink); padding: 8px 14px; cursor: pointer; border-radius: 8px; }
+.nav-btn:hover { border-color: var(--accent); color: var(--accent-ink); }
+.nav-btn.primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); font-weight: 700; }
+.nav-btn.primary:hover { color: var(--on-accent); filter: brightness(1.06); }
+.progress { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; align-items: center; min-width: 0; }
+.dot { width: 9px; height: 9px; padding: 0; border: 0; border-radius: 50%; background: var(--line); cursor: pointer; }
+.dot.active { width: 26px; border-radius: 99px; background: var(--accent); }
+.counter { color: var(--muted); font: 500 12px var(--mono); }
+@media (max-width: 640px) { .controls { flex-wrap: wrap; justify-content: center; } .progress { order: 3; width: 100%; } .hide-sm { display: none; } }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; } }
+</style>
+
+<div id="frame">
+<div id="stage">
+
+  <!-- 1 OPENING -->
+  <article class="slide hero active" data-title="Opening">
+    <span class="slide-number"></span>
+    <div>
+      <div class="eyebrow">Sparta · Internal Business Improvement</div>
+      <div class="hero-label"><span class="pulse"></span> AI Decision Support System for Customer Support</div>
+      <h1>Dari knowledge yang tersebar menjadi jawaban yang bisa dipercaya.</h1>
+      <p class="lede">CSCopilot membantu agent Customer Support memahami issue, menemukan solusi dari knowledge perusahaan, dan menyusun draft balasan. Keputusan akhir tetap di tangan agent.</p>
+    </div>
+    <div class="hero-grid">
+      <div class="hero-foot"><span class="tag"><b>Result</b> yang tercapai</span><span class="tag"><b>Challenges</b> kendala &amp; solusi</span><span class="tag"><b>Learning</b> pelajaran</span><span class="tag"><b>Next</b> pengembangan</span></div>
+      <div class="hero-visual" aria-label="Preview chat CSCopilot">
+        <div class="chat-line right"><div class="bubble user">Kenapa saldo poin customer tampil 0?</div></div>
+        <div class="chat-line"><div class="bubble ai"><strong>Knowledge ditemukan.</strong><br>Langkah pengecekan yang relevan dari knowledge perusahaan.</div></div>
+        <div class="chat-line"><div class="bubble ai">Draft siap ditinjau agent <strong>· dengan source reference</strong></div></div>
+      </div>
+    </div>
+    <div class="notes"><strong>OPENING</strong><br>Sebut judul proposal, lalu satu kalimat: AI membantu agent, bukan menggantikan agent. Empat bagian yang diminta Sparta (Result, Challenges, Learning, Next Step) dibahas setelah konteks proposal.</div>
+  </article>
+
+  <!-- 2 PROJECT OVERVIEW -->
+  <article class="slide" data-title="Project overview">
+    <span class="slide-number"></span>
+    <div class="eyebrow">Proposal · project overview</div>
+    <div class="split">
+      <div class="copy">
+        <h2>Satu chatbot internal sebagai pintu masuk ke semua SOP.</h2>
+        <p class="body-copy" style="margin-top:32px">Agent cukup menulis issue lewat chat. Chatbot memahami konteks, mencari informasi dari Notion, menampilkan source, dan membuat draft bila diperlukan. Pada MVP tidak ada auto-reply.</p>
+      </div>
+      <dl class="facts">
+        <div class="fact"><dt>Project title</dt><dd><strong>CSCoPilot – AI Decision Support System for Customer Support</strong></dd></div>
+        <div class="fact"><dt>Project type</dt><dd>Internal Business Improvement</dd></div>
+        <div class="fact"><dt>Chatbot</dt><dd>Interface utama agent</dd></div>
+        <div class="fact"><dt>Notion</dt><dd>Single source of truth. Dokumen disetujui diindeks untuk pencarian.</dd></div>
+        <div class="fact"><dt>Database</dt><dd>Menyimpan user, histori chat, draft, dan approval.</dd></div>
+        <div class="fact"><dt>AI</dt><dd>Memahami issue dan menyusun draft balasan.</dd></div>
+        <div class="fact"><dt>Customer Support</dt><dd><strong>Pengambil keputusan akhir</strong></dd></div>
+      </dl>
+    </div>
+    <div class="notes"><strong>OVERVIEW</strong><br>Tekankan pembagian peran: Chatbot = interface, Notion = sumber kebenaran, Database = histori dan workflow, AI = pemahaman dan draft, Customer Support = keputusan.</div>
+  </article>
+
+  <!-- 3 PROBLEM + STAKEHOLDERS -->
+  <article class="slide" data-title="Business problem">
+    <span class="slide-number"></span>
+    <div class="eyebrow">Proposal · business problem</div>
+    <div class="split">
+      <div class="copy">
+        <h2>Mencari SOP manual memperlambat respons dan membuat jawaban tidak seragam.</h2>
+        <p class="body-copy" style="margin-top:28px">Agent mencari SOP, FAQ, troubleshooting guide, dan template balasan dari berbagai sumber. Dampaknya terasa sampai Support Lead, Knowledge Owner, dan management.</p>
+      </div>
+      <div class="problem-board">
+        <div class="problem-card"><span class="mini">Kecepatan</span><h3>Respons lambat</h3><p>Waktu habis untuk mencari dokumen, bukan menyelesaikan issue.</p></div>
+        <div class="problem-card"><span class="mini">Efisiensi</span><h3>Investigasi berulang</h3><p>Kasus serupa diselidiki dari awal oleh agent berbeda.</p></div>
+        <div class="problem-card"><span class="mini">Kualitas</span><h3>Jawaban kurang konsisten</h3><p>Isi balasan bergantung pada siapa yang menjawab.</p></div>
+        <div class="problem-card"><span class="mini">Risiko</span><h3>Bergantung pada individu</h3><p>Pengalaman personal menjadi satu-satunya "knowledge base".</p></div>
+      </div>
+    </div>
+    <div class="roles">
+      <div class="role"><span class="mini">User</span><h3>Customer Support</h3><p>Agent harian</p></div>
+      <div class="role"><span class="mini">User</span><h3>Project Manager</h3><p>Memantau penggunaan</p></div>
+      <div class="role"><span class="mini">User</span><h3>Developer</h3><p>Membangun &amp; menjaga sistem</p></div>
+      <div class="role stake"><span class="mini" style="color:var(--amber)">Stakeholder</span><h3>Management</h3><p>Dampak operasional</p></div>
+      <div class="role stake"><span class="mini" style="color:var(--amber)">Stakeholder</span><h3>Product Owner</h3><p>Internal System Team</p></div>
+    </div>
+    <div class="notes"><strong>PROBLEM</strong><br>Mulai dari pengalaman agent. Jangan baca semua poin, pilih satu: "jawaban bergantung pada siapa yang menjawab".</div>
+  </article>
+
+  <!-- 4 SOLUTION -->
+  <article class="slide" data-title="Solution">
+    <span class="slide-number"></span>
+    <div class="eyebrow">Proposal · solution overview</div>
+    <h2>Lima langkah dari issue sampai draft yang disetujui agent.</h2>
+    <div class="flow">
+      <div class="flow-step"><span class="mini">1 · Paham</span><h3>Konteks &amp; klarifikasi</h3><p>Chatbot memahami issue dan bertanya bila konteks kurang.</p></div>
+      <div class="flow-step"><span class="mini">2 · Cari</span><h3>Knowledge Notion</h3><p>Mencari knowledge relevan dari dokumen yang sudah diindeks.</p></div>
+      <div class="flow-step"><span class="mini">3 · Tampilkan</span><h3>Solusi + source</h3><p>Kemungkinan solusi disertai source reference.</p></div>
+      <div class="flow-step"><span class="mini">4 · Susun</span><h3>Draft balasan</h3><p>Dibuat atau diperbaiki sesuai instruksi agent.</p></div>
+      <div class="flow-step"><span class="mini">5 · Putuskan</span><h3>Agent approve</h3><p>Agent memeriksa, mengedit, dan menyetujui sebelum dipakai.</p></div>
+    </div>
+    <div class="principle">
+      <div><b>Chatbot</b>interface agent</div><div><b>Notion</b>source of truth</div><div><b>Database</b>histori &amp; workflow</div><div><b>AI</b>paham issue &amp; draft</div><div><b>Support</b>keputusan akhir</div>
+    </div>
+    <div class="notes"><strong>SOLUTION</strong><br>Satu kalimat per langkah. Berhenti di langkah 5: di sinilah manusia memegang kendali.</div>
+  </article>
+
+  <!-- 5 EXPECTED VALUE -->
+  <article class="slide" data-title="Expected value">
+    <span class="slide-number"></span>
+    <div class="eyebrow">Proposal · expected value</div>
+    <h2>Nilai yang dijanjikan: lebih cepat, lebih konsisten, lebih mudah dipelajari.</h2>
+    <div class="value-grid">
+      <div class="value"><span class="mini">Productivity</span><h3>Waktu kerja lebih efisien</h3><ul><li>Pencarian SOP lebih singkat</li><li>Balasan ke client lebih cepat</li><li>Pekerjaan manual berulang berkurang</li></ul></div>
+      <div class="value"><span class="mini">Cost saving</span><h3>Biaya waktu turun</h3><ul><li>Onboarding agent baru lebih singkat</li><li>Koordinasi antar tim berkurang</li><li>Investigasi kasus serupa berkurang</li></ul></div>
+      <div class="value"><span class="mini">Quality</span><h3>Jawaban lebih seragam</h3><ul><li>Konsistensi jawaban ke client</li><li>Human error berkurang</li></ul></div>
+      <div class="value"><span class="mini">Employee experience</span><h3>Informasi mudah didapat</h3><ul><li>Anggota baru belajar lebih cepat</li><li>Tidak bergantung pada pengalaman individu</li></ul></div>
+      <div class="value"><span class="mini">Knowledge management</span><h3>Dokumentasi tetap terpusat</h3><ul><li>Notion tetap single source of truth</li><li>Tanpa duplikasi data</li></ul></div>
+      <div class="value"><span class="mini">Future foundation</span><h3>Pondasi tahap berikutnya</h3><ul><li>Integrasi helpdesk</li><li>Knowledge source tambahan</li><li>Analytics &amp; case intelligence</li></ul></div>
+    </div>
+    <div class="notes"><strong>VALUE</strong><br>Bagian ini adalah janji di proposal. Slide Result menunjukkan mana yang sudah terbukti dan mana yang belum diukur.</div>
+  </article>
+
+  <!-- 6 SCOPE -->
+  <article class="slide" data-title="MVP scope">
+    <span class="slide-number"></span>
+    <div class="eyebrow">Proposal · 1-month MVP scope</div>
+    <h2>Scope dijaga kecil agar bisa divalidasi dalam satu bulan.</h2>
+    <div class="scope">
+      <div class="scope-col in">
+        <h3>Included</h3>
+        <div class="scope-row"><span>Internal chatbot conversation interface</span><span>Next.js / React</span></div>
+        <div class="scope-row"><span>Natural-language issue input</span><span>Next.js + API</span></div>
+        <div class="scope-row"><span>Jawaban AI berdasarkan knowledge internal</span><span>Claude API</span></div>
+        <div class="scope-row"><span>Integrasi Notion terbatas</span><span>Notion API</span></div>
+        <div class="scope-row"><span>Scheduled sync &amp; indexing dokumen terpilih</span><span>Server-side</span></div>
+        <div class="scope-row"><span>Source reference &amp; conversation history</span><span>Supabase</span></div>
+        <div class="scope-row"><span>Authentication internal dasar</span><span>Supabase Auth</span></div>
+      </div>
+      <div class="scope-col out">
+        <h3>Out of scope</h3>
+        <div class="scope-row"><span>Chatbot customer-facing &amp; AI auto-reply</span><span>MVP hanya internal</span></div>
+        <div class="scope-row"><span>WhatsApp, Zendesk, Freshdesk, Slack</span><span>Perlu integrasi &amp; testing tambahan</span></div>
+        <div class="scope-row"><span>Mobile app</span><span>Fokus web app</span></div>
+        <div class="scope-row"><span>Banyak knowledge source, real-time sync</span><span>Notion saja, scheduled sync</span></div>
+        <div class="scope-row"><span>OCR, image, audio, video</span><span>Issue berbasis teks</span></div>
+        <div class="scope-row"><span>Analytics dashboard &amp; AI Ticket Analyzer</span><span>Setelah chatbot tervalidasi</span></div>
+      </div>
+    </div>
+    <div class="agent-flow">Agent login → buka chatbot → tulis issue → chatbot cari knowledge → jawaban + source → agent lanjut percakapan atau bertindak sesuai prosedur</div>
+    <div class="notes"><strong>SCOPE</strong><br>Catatan: proposal menyebut NextAuth atau provider yang disetujui. Implementasi memakai Supabase Auth.</div>
+  </article>
+
+  <!-- 7 RESULT -->
+  <article class="slide" data-title="Result">
+    <span class="slide-number"></span>
+    <div class="eyebrow">Result · apa yang berhasil dicapai</div>
+    <h2 style="font-size:56px">MVP berjalan: agent bertanya, chatbot menjawab dengan source, agent memutuskan.</h2>
+    <div class="cards" style="margin-top:30px">
+      <div class="card featured"><span class="mini">Core</span><h3>Chat per conversation</h3><p>Agent menulis issue, melihat konteks, dan melanjutkan follow-up tanpa mengulang.</p></div>
+      <div class="card"><span class="mini">Knowledge</span><h3>Notion → Supabase</h3><p>Dokumen disinkronkan, diindeks, dan dicari. Jawaban membawa citation.</p></div>
+      <div class="card"><span class="mini">Control</span><h3>Draft, approve, reject</h3><p>AI menyusun draft. Agent menentukan apa yang dipakai. Audit trail untuk admin.</p></div>
+    </div>
+    <div class="criteria">
+      <div class="crit"><span class="dot-s">✓</span><span>Agent menyampaikan issue dalam bahasa natural</span><span class="state">Tercapai</span></div>
+      <div class="crit"><span class="dot-s">✓</span><span>Jawaban relevan berdasarkan knowledge internal</span><span class="state">Tercapai</span></div>
+      <div class="crit"><span class="dot-s">✓</span><span>Menampilkan source, atau menyatakan source tidak ditemukan</span><span class="state">Tercapai</span></div>
+      <div class="crit"><span class="dot-s">✓</span><span>Meminta klarifikasi saat konteks kurang</span><span class="state">Tercapai</span></div>
+      <div class="crit"><span class="dot-s">✓</span><span>Melanjutkan percakapan tanpa mengulang konteks</span><span class="state">Tercapai</span></div>
+      <div class="crit"><span class="dot-s">✓</span><span>Histori tersimpan dan diakses sesuai role</span><span class="state">Tercapai</span></div>
+      <div class="crit todo"><span class="dot-s">…</span><span>Waktu pencarian lebih rendah dari baseline manual</span><span class="state">Belum diukur</span></div>
+      <div class="crit todo"><span class="dot-s">…</span><span>Agent pilot memakai pada kasus support nyata</span><span class="state">Tahap berikut</span></div>
+    </div>
+    <div class="stat-row">
+      <div class="stat"><strong>6 / 8</strong><span>kriteria sukses MVP tercapai</span></div>
+      <div class="stat"><strong>5</strong><span>artikel knowledge point live</span></div>
+      <div class="stat"><strong>4</strong><span>skenario UAT otomatis lolos</span></div>
+    </div>
+    <div class="notes"><strong>RESULT</strong><br>Sebut jujur: dua kriteria terakhir (baseline waktu dan pilot) butuh data pengguna nyata. Jika tim sudah punya angka baseline atau jumlah agent pilot, ganti dua baris ini sebelum presentasi. Skenario UAT: 4 lolos, 2 ditunda karena knowledge Project B belum ada.</div>
+  </article>
+
+  <!-- 8 DEMO -->
+  <article class="slide" data-title="Demo">
+    <span class="slide-number"></span>
+    <div class="eyebrow">Result · satu momen dari produk</div>
+    <h2>Jawaban tidak hanya terdengar benar. Ia menunjukkan dari mana keyakinannya datang.</h2>
+    <div class="demo">
+      <div class="demo-prompt"><span class="mini">Issue dari agent</span><blockquote>“Kenapa saldo poin customer tampil 0?”</blockquote><span class="mini">Follow-up tetap membawa konteks</span></div>
+      <div class="demo-answer">
+        <div class="answer-head"><span>CSCopilot / grounded response</span><span class="status">● knowledge ditemukan</span></div>
+        <div class="answer-body"><strong>Diagnosis awal</strong><br>Periksa akun customer, status saldo, dan riwayat perubahan poin. Gunakan langkah verifikasi dari knowledge sebelum memberi konfirmasi ke customer.<br><br><strong>Recommended action</strong><br>Validasi nomor akun, lalu cocokkan saldo dengan sumber transaksi terkait.</div>
+        <span class="citation">Source: Investigate Customer Points Displayed as 0</span>
+      </div>
+    </div>
+    <div class="notes"><strong>DEMO</strong><br>Demo langsung bila bisa. Urutan: tanya, tunjukkan source, ketik "what should I do next?" untuk memperlihatkan konteks terbawa.</div>
+  </article>
+
+  <!-- 9 WIREFRAME -->
+  <article class="slide" data-title="Wireframe">
+    <span class="slide-number"></span>
+    <div class="eyebrow">Result · dari wireframe ke produk</div>
+    <h2>Dua halaman di proposal, sekarang menjadi aplikasi yang berjalan.</h2>
+    <div class="wire-row">
+      <div class="wire"><span class="wire-cap">1 · Login page</span><div class="wire-login"><div class="login-box"><div class="logo"></div><div class="field">Email</div><div class="field">Password</div><div class="btn-w">Masuk</div></div></div></div>
+      <div class="wire"><span class="wire-cap">2 · Main page (assistant)</span>
+        <div class="wire-main">
+          <div class="side"><div class="new">+ Chat baru</div><div class="hist">Saldo poin 0</div><div class="hist">Riwayat poin beda</div><div class="hist">Perhitungan poin</div></div>
+          <div class="chat">
+            <div class="b u">Kenapa riwayat poin beda dengan riwayat pesanan?</div>
+            <div class="b a">Periksa konsistensi riwayat poin dan order pada akun customer…</div>
+            <div class="src">SOURCE · Point History Does Not Match Order History</div>
+            <div class="actions"><span>Approve</span><span>Reject</span></div>
+            <div class="composer"><span>Jelaskan issue customer...</span><i>↑</i></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="notes"><strong>WIREFRAME</strong><br>Ini sketsa ulang dari wireframe proposal, bukan screenshot. Ganti dengan screenshot asli aplikasi jika ingin tampilan final.</div>
+  </article>
+
+  <!-- 10 CHALLENGES -->
+  <article class="slide" data-title="Challenges">
+    <span class="slide-number"></span>
+    <div class="eyebrow">Challenges · kendala yang dihadapi</div>
+    <h2>Sulitnya bukan membuat AI menjawab. Sulitnya membuat AI tahu kapan harus menjawab.</h2>
+    <div class="challenge-grid">
+      <div class="challenge"><span class="mini">Risiko proposal #1 · kualitas knowledge</span><h3>Knowledge live tidak cocok dengan skenario test</h3><p>Test memakai topik yang belum ada di Notion, sehingga tampak seperti bug retrieval.</p></div>
+      <div class="challenge"><span class="mini">Kriteria MVP · konteks percakapan</span><h3>Follow-up pendek kehilangan konteks</h3><p>"What should I do next?" terbaca sebagai topik baru dan memicu pertanyaan klarifikasi yang tidak perlu.</p></div>
+      <div class="challenge"><span class="mini">Risiko proposal #5 · terlalu percaya AI</span><h3>Metadata teknis bisa bocor ke draft</h3><p>Source ID, UUID, URL, dan score tidak boleh muncul di balasan yang akan dipakai untuk client.</p></div>
+      <div class="challenge"><span class="mini">Risiko proposal #3 · error &amp; downtime</span><h3>Auth dan UAT harus stabil</h3><p>Token kedaluwarsa, akun QA, dan environment lokal memengaruhi hasil pengujian.</p></div>
+    </div>
+    <div class="notes"><strong>CHALLENGES</strong><br>Setiap kendala nyambung ke risiko di proposal. Ini menunjukkan risiko yang ditulis di awal memang muncul dan dikelola.</div>
+  </article>
+
+  <!-- 11 SOLUTIONS -->
+  <article class="slide" data-title="Solutions">
+    <span class="slide-number"></span>
+    <div class="eyebrow">Challenges · solusinya</div>
+    <h2>Setiap kendala menjadi aturan produk atau test baru.</h2>
+    <div class="cards">
+      <div class="card"><span class="mini">Fixture</span><h3>Test mengikuti knowledge nyata</h3><p>Skenario E2E diganti ke artikel point yang benar-benar ada di live environment.</p></div>
+      <div class="card featured"><span class="mini">Continuity</span><h3>Sinyal follow-up diperluas</h3><p>"What's next", "langkah selanjutnya", dan "berikutnya" kini mewarisi topik sebelumnya.</p></div>
+      <div class="card"><span class="mini">Safety</span><h3>Jawaban diperiksa sebelum keluar</h3><p>Pemeriksaan menahan source metadata dan memakai fallback bila grounding kurang.</p></div>
+      <div class="card"><span class="mini">Resilience</span><h3>Token refresh + retry</h3><p>Request yang menerima 401 mencoba refresh session sekali, tanpa mengganggu agent.</p></div>
+      <div class="card"><span class="mini">Verification</span><h3>Self-check yang bisa dijalankan</h3><p>Retrieval, sinyal follow-up, dan bentuk output diverifikasi dengan check kecil.</p></div>
+      <div class="card"><span class="mini">Control</span><h3>Manusia tetap memutuskan</h3><p>Approve, reject, dan audit trail menjadi batas operasional yang jelas.</p></div>
+    </div>
+    <div class="notes"><strong>SOLUTIONS</strong><br>Kalimat kunci: tidak memaksa AI selalu menjawab, tetapi memastikan jawaban hanya keluar ketika konteksnya cukup.</div>
+  </article>
+
+  <!-- 12 LEARNING -->
+  <article class="slide" data-title="Learning">
+    <span class="slide-number"></span>
+    <div class="eyebrow">Learning · yang dipelajari</div>
+    <div class="learning">
+      <div class="learning-quote"><p>Grounding bukan fitur tambahan. Grounding adalah kontrak kepercayaan.</p><small>PELAJARAN UTAMA</small></div>
+      <div class="copy">
+        <h2>Empat pelajaran dari pengerjaan.</h2>
+        <ul class="list">
+          <li>Kualitas jawaban dimulai dari kualitas dan cakupan knowledge di Notion.</li>
+          <li>Pemeriksaan deterministik menjaga perilaku di sekitar LLM yang tidak selalu konsisten.</li>
+          <li>Kelanjutan konteks adalah pengalaman pengguna, bukan sekadar detail teknis.</li>
+          <li>Scope MVP yang kecil memungkinkan kualitas dijaga dalam satu bulan.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="notes"><strong>LEARNING</strong><br>Hubungkan ke risiko proposal: kualitas jawaban bergantung pada Notion. Itu terbukti, dan itu pelajaran terbesar.</div>
+  </article>
+
+  <!-- 13 NEXT STEP -->
+  <article class="slide" data-title="Next step">
+    <span class="slide-number"></span>
+    <div class="eyebrow">Next step · pengembangan selanjutnya</div>
+    <h2>Validasi dengan agent nyata dulu, baru perluas.</h2>
+    <div class="roadmap">
+      <div class="road"><span class="time">Sekarang · validasi</span><h3>Pilot dengan agent</h3><p>Penuhi dua kriteria MVP yang tersisa.</p><ul><li>Ukur baseline pencarian manual</li><li>Pilot pada kasus support nyata</li><li>Perluas artikel (mis. Project B)</li></ul></div>
+      <div class="road"><span class="time">Berikutnya · belajar</span><h3>Pakai feedback agent</h3><p>Approve dan reject menjadi sinyal kualitas.</p><ul><li>Feedback per citation</li><li>Deteksi knowledge kosong atau stale</li><li>Regression set dari kasus nyata</li></ul></div>
+      <div class="road"><span class="time">Nanti · skala</span><h3>Fondasi tahap lanjut</h3><p>Sesuai future foundation di proposal.</p><ul><li>Integrasi helpdesk (Zendesk, dll.)</li><li>Knowledge source tambahan</li><li>Analytics &amp; case intelligence</li></ul></div>
+    </div>
+    <div class="notes"><strong>NEXT</strong><br>Jangan menjanjikan auto-reply. Proposal menetapkan keputusan akhir tetap di agent; roadmap menjaga prinsip itu.</div>
+  </article>
+
+  <!-- 14 CLOSE -->
+  <article class="slide close" data-title="Closing">
+    <span class="slide-number"></span>
+    <div class="close-mark"><span>+</span></div>
+    <div class="eyebrow">Penutup</div>
+    <h2>Tujuannya bukan menggantikan judgment support.</h2>
+    <p class="close-line">Tujuannya membuat judgment yang baik menjadi lebih cepat, lebih konsisten, dan lebih mudah dipertanggungjawabkan.</p>
+    <p class="close-meta">CSCoPilot · Sparta · Terima kasih</p>
+    <div class="notes"><strong>CLOSING</strong><br>Tutup dengan satu kalimat ini, lalu buka tanya jawab atau demo singkat.</div>
+  </article>
+
+</div>
+</div>
+
+<div id="notesBar" aria-live="polite"></div>
+<nav class="controls" aria-label="Kontrol slide">
+  <div class="control-group"><button class="nav-btn" id="prev" type="button">← Prev</button><button class="nav-btn primary" id="next" type="button">Next →</button></div>
+  <div class="progress" id="progress" aria-label="Navigasi slide"></div>
+  <div class="control-group"><span class="counter" id="counter"></span><button class="nav-btn hide-sm" id="notesToggle" type="button">Notes</button><button class="nav-btn hide-sm" id="fsToggle" type="button">Fullscreen</button></div>
+</nav>
+
+<script>
+(() => {
+  const W = 1920, H = 1080;
+  const frame = document.getElementById('frame');
+  const stage = document.getElementById('stage');
+  const slides = [...document.querySelectorAll('.slide')];
+  const dots = document.getElementById('progress');
+  const counter = document.getElementById('counter');
+  const notesBar = document.getElementById('notesBar');
+  const pad = n => String(n).padStart(2, '0');
+  const slug = s => s.dataset.title.toLowerCase().replace(/\s+/g, '-');
+  let index = 0, notesOpen = false;
+
+  function fit() {
+    const s = Math.min(frame.clientWidth / W, frame.clientHeight / H);
+    const x = (frame.clientWidth - W * s) / 2, y = (frame.clientHeight - H * s) / 2;
+    stage.style.transform = `translate(${x}px, ${y}px) scale(${s})`;
+  }
+  new ResizeObserver(fit).observe(frame);
+  addEventListener('resize', fit);
+
+  slides.forEach((slide, i) => {
+    slide.querySelector('.slide-number').textContent = `${pad(i + 1)} / ${pad(slides.length)}`;
+    if (i > 0) {
+      const b = document.createElement('div');
+      b.className = 'brandline';
+      b.innerHTML = '<i></i>CSCOPILOT · SPARTA';
+      slide.append(b);
+    }
+    const dot = document.createElement('button');
+    dot.className = 'dot';
+    dot.type = 'button';
+    dot.setAttribute('aria-label', `Slide ${i + 1}: ${slide.dataset.title}`);
+    dot.addEventListener('click', () => go(i));
+    dots.append(dot);
+  });
+
+  function renderNotes() {
+    const n = slides[index].querySelector('.notes');
+    notesBar.innerHTML = n ? n.innerHTML : '';
+    notesBar.classList.toggle('visible', notesOpen);
+    requestAnimationFrame(fit);
+  }
+  function go(next) {
+    index = (next + slides.length) % slides.length;
+    slides.forEach((s, i) => s.classList.toggle('active', i === index));
+    [...dots.children].forEach((d, i) => d.classList.toggle('active', i === index));
+    counter.textContent = `${pad(index + 1)} / ${pad(slides.length)}`;
+    try { history.replaceState(null, '', '#' + slug(slides[index])); } catch (e) {}
+    renderNotes();
+  }
+  function toggleNotes() { notesOpen = !notesOpen; renderNotes(); }
+  function toggleFs() {
+    try {
+      if (document.fullscreenElement) document.exitFullscreen();
+      else document.documentElement.requestFullscreen().catch(() => {});
+    } catch (e) {}
+  }
+  document.getElementById('prev').addEventListener('click', () => go(index - 1));
+  document.getElementById('next').addEventListener('click', () => go(index + 1));
+  document.getElementById('notesToggle').addEventListener('click', toggleNotes);
+  document.getElementById('fsToggle').addEventListener('click', toggleFs);
+  document.addEventListener('keydown', e => {
+    if (e.key === 'ArrowRight' || e.key === 'PageDown' || e.key === ' ') { e.preventDefault(); go(index + 1); }
+    else if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); go(index - 1); }
+    else if (e.key === 'Home') go(0);
+    else if (e.key === 'End') go(slides.length - 1);
+    else if (e.key.toLowerCase() === 'n') toggleNotes();
+    else if (e.key.toLowerCase() === 'f') toggleFs();
+  });
+  const start = slides.findIndex(s => slug(s) === location.hash.slice(1));
+  go(start >= 0 ? start : 0);
+  fit();
+})();
+</script>
